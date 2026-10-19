@@ -11,6 +11,7 @@ import {
   HeartPulse,
   MapPin,
   Plus,
+  Printer,
   RotateCcw,
   Search,
   Send,
@@ -44,6 +45,61 @@ import {
 } from '@/src/lib/i18n';
 import { evaluateCbacScore, evaluateScreening, formatAbhaId } from '@/src/lib/screening-engine';
 import { offlineDb } from '@/src/lib/offline-db';
+
+// Location policy: only villages/towns of Uttar Pradesh, India are accepted.
+// The catalog (VILLAGE_CATALOG) contains Sitapur-district (UP) names; free-text
+// entries are screened against well-known out-of-state Indian city names.
+const NON_UP_LOCATION_HINTS = [
+  'mumbai',
+  'delhi',
+  'kolkata',
+  'calcutta',
+  'chennai',
+  'madras',
+  'bengaluru',
+  'bangalore',
+  'hyderabad',
+  'pune',
+  'poona',
+  'ahmedabad',
+  'jaipur',
+  'surat',
+  'indore',
+  'bhopal',
+  'nagpur',
+  'patna',
+  'guwahati',
+  'dehradun',
+  'shimla',
+  'chandigarh',
+  'gurgaon',
+  'gurugram',
+  'faridabad',
+  'coimbatore',
+  'kochi',
+  'kerala',
+  'tamil nadu',
+  'maharashtra',
+  'gujarat',
+  'rajasthan',
+  'punjab',
+  'haryana',
+  'karnataka',
+  'karnatak',
+  'west bengal',
+  'andhra',
+  'telangana',
+  'assam',
+  'odisha',
+  'orissa',
+  'madhya pradesh',
+  'goa',
+];
+
+function isOutsideUttarPradesh(name: string): boolean {
+  const norm = name.toLowerCase().trim();
+  return NON_UP_LOCATION_HINTS.some((hint) => norm.includes(hint));
+}
 
 interface HealthWorkerViewProps {
   activeSubTab: 'overview' | 'register' | 'screening' | 'referrals';
@@ -133,7 +189,7 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
   const [regId, setRegId] = useState('PAT-RMP-1001');
   const [regName, setRegName] = useState('');
   const [regAge, setRegAge] = useState('');
-  const [regSex, setRegSex] = useState<'female' | 'male' | 'other'>('female');
+  const [regSex, setRegSex] = useState<'' | 'female' | 'male' | 'other'>('');
   const [regIsPregnant, setRegIsPregnant] = useState(false);
   const [regVillage, setRegVillage] = useState(VILLAGE_CATALOG[0]);
   const [customVillageInput, setCustomVillageInput] = useState('');
@@ -174,9 +230,27 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
   const [historyNotes, setHistoryNotes] = useState<string>('');
   const [aiNote, setAiNote] = useState<string>('');
   const [aiLoading, setAiLoading] = useState<boolean>(false);
+
+  // Live AI Triage Review (auto-refreshes while the worker fills the form)
+  const [liveAiNote, setLiveAiNote] = useState<string | null>(null);
+  const [liveAiLoading, setLiveAiLoading] = useState<boolean>(false);
+  const [liveAiError, setLiveAiError] = useState<boolean>(false);
+
+  const liveReviewHasContent =
+    selectedSymptoms.length > 0 ||
+    [
+      systolicBp,
+      diastolicBp,
+      spo2Percent,
+      temperatureC,
+      heartRateBpm,
+      glucoseMgDl,
+      hemoglobinGDl,
+      respRateBpm,
+    ].some((v) => v.trim() !== '');
   const [createReferralChecked, setCreateReferralChecked] = useState<boolean>(true);
   const [referralDestination, setReferralDestination] = useState<string>(
-    'Simulated PHC Rampur (Demo)'
+    'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)'
   );
   const [customFollowUpDate, setCustomFollowUpDate] = useState<string>('');
   const [customFollowUpNotes, setCustomFollowUpNotes] = useState<string>('');
@@ -254,6 +328,9 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     );
   }, [patients, patientDirectorySearch]);
 
+  // Pregnancy selection only ever applies to female patients
+  const effectiveIsPregnant = selectedPatient?.sex === 'female' ? isPregnant : false;
+
   const currentFormSignature = useMemo(
     () =>
       JSON.stringify([
@@ -266,8 +343,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
         glucoseMgDl,
         hemoglobinGDl,
         respRateBpm,
-        isPregnant,
-        gestationalWeeks,
+        effectiveIsPregnant,
+        selectedPatient?.sex === 'female' ? gestationalWeeks : '',
         selectedSymptoms,
         symptomDurationDays,
       ]),
@@ -281,7 +358,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
       glucoseMgDl,
       hemoglobinGDl,
       respRateBpm,
-      isPregnant,
+      effectiveIsPregnant,
+      selectedPatient,
       gestationalWeeks,
       selectedSymptoms,
       symptomDurationDays,
@@ -307,8 +385,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
           randomBloodGlucoseMgDl: glucoseMgDl,
           hemoglobinGDl,
           respiratoryRateBpm: respRateBpm,
-          isPregnant,
-          gestationalWeeks,
+          isPregnant: effectiveIsPregnant,
+          gestationalWeeks: effectiveIsPregnant ? gestationalWeeks : '',
           symptoms: selectedSymptoms,
           symptomDurationDays: Number(symptomDurationDays || 0),
           medicalHistoryNotes: historyNotes,
@@ -328,7 +406,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     glucoseMgDl,
     hemoglobinGDl,
     respRateBpm,
-    isPregnant,
+    effectiveIsPregnant,
+    selectedPatient,
     gestationalWeeks,
     selectedSymptoms,
     symptomDurationDays,
@@ -357,8 +436,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
       randomBloodGlucoseMgDl: parseNullableNumber(glucoseMgDl),
       hemoglobinGDl: parseNullableNumber(hemoglobinGDl),
       respiratoryRateBpm: parseNullableNumber(respRateBpm),
-      isPregnant,
-      gestationalWeeks: isPregnant ? parseNullableNumber(gestationalWeeks) : null,
+      isPregnant: effectiveIsPregnant,
+      gestationalWeeks: effectiveIsPregnant ? parseNullableNumber(gestationalWeeks) : null,
       symptoms: selectedSymptoms,
       symptomDurationDays: Number(symptomDurationDays || 0),
       medicalHistoryNotes: historyNotes,
@@ -374,7 +453,7 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     glucoseMgDl,
     hemoglobinGDl,
     respRateBpm,
-    isPregnant,
+    effectiveIsPregnant,
     gestationalWeeks,
     selectedSymptoms,
     symptomDurationDays,
@@ -382,8 +461,100 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     cbacInput,
   ]);
 
+  // Debounced live AI review: runs while the worker types symptoms/vitals.
+  // The deterministic engine (liveEvaluation) always decides attention level;
+  // AI only supplies a plain-language suggestion (same guardrail as saved notes).
+  useEffect(() => {
+    if (untrustedDeviceMode) return;
+    if (typeof window === 'undefined' || !window.navigator.onLine) return;
+
+    const hasSymptoms = selectedSymptoms.length > 0;
+    const hasVitals = [
+      systolicBp,
+      diastolicBp,
+      spo2Percent,
+      temperatureC,
+      heartRateBpm,
+      glucoseMgDl,
+      hemoglobinGDl,
+      respRateBpm,
+    ].some((v) => v.trim() !== '');
+
+    if (!hasSymptoms && !hasVitals) return;
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      setLiveAiLoading(true);
+      fetch('/api/ai-explain', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          language,
+          screeningInput: {
+            patientId: effectiveSelectedPatientId,
+            systolicBp: parseNullableNumber(systolicBp),
+            diastolicBp: parseNullableNumber(diastolicBp),
+            heartRateBpm: parseNullableNumber(heartRateBpm),
+            temperatureC: parseNullableNumber(temperatureC),
+            spo2Percent: parseNullableNumber(spo2Percent),
+            randomBloodGlucoseMgDl: parseNullableNumber(glucoseMgDl),
+            hemoglobinGDl: parseNullableNumber(hemoglobinGDl),
+            respiratoryRateBpm: parseNullableNumber(respRateBpm),
+            isPregnant: effectiveIsPregnant,
+            gestationalWeeks: effectiveIsPregnant
+              ? parseNullableNumber(gestationalWeeks)
+              : null,
+            symptoms: selectedSymptoms,
+            symptomDurationDays: Number(symptomDurationDays || 0),
+          },
+        }),
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (controller.signal.aborted) return;
+          if (data.ok && typeof data.supplementalNote === 'string') {
+            setLiveAiNote(data.supplementalNote);
+            setLiveAiError(false);
+          } else {
+            setLiveAiNote(null);
+            setLiveAiError(true);
+          }
+        })
+        .catch(() => {
+          if (controller.signal.aborted) return;
+          setLiveAiNote(null);
+          setLiveAiError(true);
+        })
+        .finally(() => {
+          if (!controller.signal.aborted) setLiveAiLoading(false);
+        });
+    }, 1200);
+
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [
+    untrustedDeviceMode,
+    language,
+    effectiveSelectedPatientId,
+    systolicBp,
+    diastolicBp,
+    spo2Percent,
+    temperatureC,
+    heartRateBpm,
+    glucoseMgDl,
+    hemoglobinGDl,
+    respRateBpm,
+    effectiveIsPregnant,
+    gestationalWeeks,
+    selectedSymptoms,
+    symptomDurationDays,
+  ]);
+
   const handleToggleVoiceCounseling = () => {
-    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (typeof window === 'undefined' || !window.speechSynthesis) return;
     if (isSpeaking) {
       window.speechSynthesis.cancel();
       setIsSpeaking(false);
@@ -421,6 +592,164 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     d.setDate(d.getDate() + (liveEvaluation.suggestedFollowUpDays || 7));
     return d.toISOString().slice(0, 10);
   }, [liveEvaluation.suggestedFollowUpDays]);
+
+  const handlePrintPatientSummary = (): void => {
+    if (typeof window === 'undefined') return;
+    const pat = selectedPatient;
+    if (!pat) return;
+    const isHi = language === 'hi';
+    const esc = (v: string): string =>
+      String(v).replace(
+        /[&<>"]/g,
+        (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] || c)
+      );
+
+    const lastSaved = screenings
+      .filter((s) => s.patientId === pat.patientId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+
+    const src = lastSaved ?? null;
+    const evalCategory = src ? src.resultCategory : liveEvaluation.resultCategory;
+    const bannerColor =
+      evalCategory === 'urgent_escalation'
+        ? '#dc2626'
+        : evalCategory === 'further_assessment_needed'
+          ? '#d97706'
+          : '#0f766e';
+    const val = (savedVal: number | null, liveVal: number | null) =>
+      lastSaved ? savedVal : liveVal;
+    const catLabel = esc(
+      formatCategoryLabel(
+        src ? src.resultCategory : liveEvaluation.resultCategory,
+        language
+      )
+    );
+    const flags = src ? src.flaggedReasons : liveEvaluation.flaggedReasons;
+    const steps = src ? src.recommendedNextSteps : liveEvaluation.recommendedNextSteps;
+    const symptomList = (src ? src.symptoms : selectedSymptoms).map(esc);
+    const durationDays =
+      (src ? src.symptomDurationDays : Number(symptomDurationDays || 0)) || 0;
+    const followUpDate = src?.followUpDueDate || customFollowUpDate || defaultFollowUpDate;
+
+    const vitalRows: Array<[string, string]> = [
+      [
+        'Blood Pressure (BP)',
+        `${val(src?.systolicBp ?? null, parseNullableNumber(systolicBp)) ?? '--'} / ${val(src?.diastolicBp ?? null, parseNullableNumber(diastolicBp)) ?? '--'} mmHg`,
+      ],
+      [
+        'SpO2',
+        `${val(src?.spo2Percent ?? null, parseNullableNumber(spo2Percent)) ?? '--'} %`,
+      ],
+      [
+        isHi ? 'शरीर का तापमान' : 'Temperature',
+        `${val(src?.temperatureC ?? null, parseNullableNumber(temperatureC)) ?? '--'} °C`,
+      ],
+      [
+        isHi ? 'नाड़ी गति' : 'Heart Rate',
+        `${val(src?.heartRateBpm ?? null, parseNullableNumber(heartRateBpm)) ?? '--'} bpm`,
+      ],
+      [
+        isHi ? 'रैंडम ब्लड शुगर' : 'Random Blood Glucose',
+        `${val(src?.randomBloodGlucoseMgDl ?? null, parseNullableNumber(glucoseMgDl)) ?? '--'} mg/dL`,
+      ],
+      [
+        isHi ? 'हीमोग्लोबिन' : 'Hemoglobin',
+        `${val(src?.hemoglobinGDl ?? null, parseNullableNumber(hemoglobinGDl)) ?? '--'} g/dL`,
+      ],
+      [
+        isHi ? 'श्वसन दर' : 'Respiratory Rate',
+        `${val(src?.respiratoryRateBpm ?? null, parseNullableNumber(respRateBpm)) ?? '--'} /min`,
+      ],
+    ];
+
+    const flagRows = flags
+      .map(
+        (f) => `<tr>
+          <td style="border:1px solid #cbd5e1;padding:8px;font-weight:600;">${esc(isHi ? f.titleHi : f.titleEn)}<br/><span style="color:#475569;font-weight:400;">${esc(isHi ? f.explanationHi : f.explanationEn)}</span></td>
+          <td style="border:1px solid #cbd5e1;padding:8px;font-family:monospace;">${esc(f.observedValue)}</td>
+        </tr>`
+      )
+      .join('');
+
+    const stepRows = steps
+      .map(
+        (s, i) =>
+          `<li style="margin-bottom:6px;"><strong>${i + 1}. ${esc(isHi ? s.actionHi : s.actionEn)}</strong> <span style="color:#64748b;">(${esc(isHi ? s.timeframeHi : s.timeframeEn)})</span></li>`
+      )
+      .join('');
+
+    const html = `<!DOCTYPE html><html lang="${language}"><head><meta charset="utf-8"/>
+      <title>${esc(pat.fullName)} — ${isHi ? 'जांच सारांश' : 'Screening Summary'}</title>
+      <style>
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, 'Segoe UI', Roboto, Arial, sans-serif; color: #0f172a; margin: 32px; font-size: 13px; }
+        h1 { font-size: 20px; margin: 0; color: #0f766e; }
+        h2 { font-size: 14px; text-transform: uppercase; letter-spacing: .04em; color: #334155; margin: 24px 0 8px; border-bottom: 2px solid #0f766e; padding-bottom: 4px; }
+        .banner { padding: 12px 16px; border-radius: 8px; border: 2px solid ${bannerColor}; font-weight: 700; font-size: 15px; }
+        table { width: 100%; border-collapse: collapse; }
+        td, th { border: 1px solid #cbd5e1; padding: 8px; text-align: left; vertical-align: top; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; }
+        .muted { color: #64748b; font-size: 12px; }
+        .footer { margin-top: 32px; border-top: 1px solid #cbd5e1; padding-top: 12px; font-size: 12px; color: #64748b; }
+        @media print { body { margin: 16px; } }
+      </style></head><body>
+      <h1>SwasthyaSetu AI — ${isHi ? 'मरीज जांच सारांश' : 'Patient Screening Summary'}</h1>
+      <p class="muted">${isHi ? 'तैयार' : 'Generated'}: ${new Date().toLocaleString()} · Screening ID: ${esc(src?.screeningId || 'PROTOTYPE-DRAFT')} · Prototype Summary (Not a Medical Diagnosis)</p>
+
+      <h2>${isHi ? 'मरीज विवरण' : 'Patient Details'}</h2>
+      <div class="grid">
+        <div><strong>${esc(pat.fullName)}</strong></div>
+        <div>ID: ${esc(pat.patientId)}</div>
+        <div>${isHi ? 'उम्र' : 'Age'}: ${pat.ageYears} · ${isHi ? 'लिंग' : 'Sex'}: ${esc(pat.sex)}</div>
+        <div>${isHi ? 'गांव' : 'Village'}: ${esc(pat.village)}, ${esc(pat.blockName)}</div>
+        <div>ABHA: ${esc(formatAbhaId(pat.patientId))}</div>
+        <div>${isHi ? 'फोन (अंतिम 4)' : 'Phone (last 4)'}: ${esc(pat.phoneLastFour || '----')}</div>
+      </div>
+
+      <h2>${isHi ? 'मं  जांच माप (Vitals)' : 'Screening Measurements (Vitals)'}</h2>
+      <div class="grid">
+        ${vitalRows.map(([k, v]) => `<div><span class="muted">${esc(k)}:</span> <strong>${esc(v)}</strong></div>`).join('')}
+      </div>
+
+      <h2>${isHi ? 'लक्षण व अवधि' : 'Symptoms & Duration'}</h2>
+      <p>${symptomList.length > 0 ? symptomList.join(', ') : isHi ? 'कोई लक्षण दर्ज नहीं' : 'No symptoms recorded'} · ${isHi ? 'अवधि' : 'Duration'}: ${durationDays} ${isHi ? 'दिन' : 'days'}</p>
+      ${src?.medicalHistoryNotes ? `<p class="muted">${esc(src.medicalHistoryNotes)}</p>` : historyNotes ? `<p class="muted">${esc(historyNotes)}</p>` : ''}
+      ${src?.isPregnant ? `<p><strong>${isHi ? 'गर्भावस्था' : 'Pregnancy'}:</strong> ${src.gestationalWeeks ?? '?'} ${isHi ? 'सप्ताह' : 'weeks'}</p>` : ''}
+
+      <h2>${isHi ? 'जांच स्थिति' : 'Screening Status'}</h2>
+      <div class="banner">${catLabel}</div>
+
+      <h2>${isHi ? 'चिन्हित कारण' : 'Flagged Reasons'} (${flags.length})</h2>
+      <table>${flags.length > 0 ? `<tr><th style="width:80%;">${isHi ? 'कारण' : 'Reason'}</th><th>${isHi ? 'माप' : 'Value'}</th></tr>${flagRows}` : `<tr><td>${isHi ? 'कोई असामान्य सीमा चिन्हित नहीं।' : 'No abnormal thresholds or danger signs triggered.'}</td></tr>`}</table>
+
+      <h2>${isHi ? 'अनुशंसित अगले कदम' : 'Recommended Next Steps'}</h2>
+      <ol>${stepRows}</ol>
+      <p style="margin-top:8px;"><strong>${isHi ? 'अगला फॉलो-अप' : 'Next Follow-up'}:</strong> ${esc(followUpDate)}</p>
+
+      <div class="footer">
+        <p>${labels.disclaimerBody}</p>
+        <p style="margin-top:16px;">${isHi ? 'कार्यकर्ता हस्ताक्षर' : 'Worker Signature'}: ________________ &nbsp;&nbsp; ${isHi ? 'तारीख' : 'Date'}: ____________</p>
+        <p class="muted">SwasthyaSetu AI · PROTOTYPE</p>
+      </div>
+    </body></html>`;
+
+    const iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.style.cssText = 'position:fixed;right:0;bottom:0;width:0;height:0;border:0;';
+    document.body.appendChild(iframe);
+    const doc = iframe.contentWindow?.document;
+    if (!doc) return;
+    doc.open();
+    doc.write(html);
+    doc.close();
+    window.setTimeout(() => {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+      window.setTimeout(() => {
+        if (document.body.contains(iframe)) document.body.removeChild(iframe);
+      }, 1500);
+    }, 200);
+  };
 
   const handleAddCustomSymptom = () => {
     const trimmed = newSymptomText.trim();
@@ -463,8 +792,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
             randomBloodGlucoseMgDl: parseNullableNumber(glucoseMgDl),
             hemoglobinGDl: parseNullableNumber(hemoglobinGDl),
             respiratoryRateBpm: parseNullableNumber(respRateBpm),
-            isPregnant,
-            gestationalWeeks: isPregnant ? parseNullableNumber(gestationalWeeks) : null,
+            isPregnant: effectiveIsPregnant,
+            gestationalWeeks: effectiveIsPregnant ? parseNullableNumber(gestationalWeeks) : null,
             symptoms: selectedSymptoms,
             symptomDurationDays: Number(symptomDurationDays || 0),
           },
@@ -524,6 +853,17 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
       return;
     }
 
+    if (!regSex) {
+      setRegFeedback({
+        type: 'error',
+        text:
+          language === 'hi'
+            ? 'कृपया मरीज का लिंग चुनें।'
+            : "Please select the patient's sex.",
+      });
+      return;
+    }
+
     setRegSubmitting(true);
     try {
       const conditionsToSave = [...regConditions];
@@ -542,6 +882,18 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
             language === 'hi'
               ? 'कृपया गांव का नाम चुनें या दर्ज करें।'
               : 'Please select or enter a valid village name.',
+        });
+        setRegSubmitting(false);
+        return;
+      }
+
+      if (isOutsideUttarPradesh(finalVillage)) {
+        setRegFeedback({
+          type: 'error',
+          text:
+            language === 'hi'
+              ? 'यह ऐप केवल उत्तर प्रदेश (भारत) के गांव/शहरों तक सीमित है। कृपया यूपी की स्थानीय ग्राम/प्रखंड सूची में से चुनें।'
+              : 'This platform supports only villages/towns within Uttar Pradesh, India. Please choose a village from the UP list.',
         });
         setRegSubmitting(false);
         return;
@@ -625,8 +977,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
         randomBloodGlucoseMgDl: parseNullableNumber(glucoseMgDl),
         hemoglobinGDl: parseNullableNumber(hemoglobinGDl),
         respiratoryRateBpm: parseNullableNumber(respRateBpm),
-        isPregnant,
-        gestationalWeeks: isPregnant ? parseNullableNumber(gestationalWeeks) : null,
+        isPregnant: effectiveIsPregnant,
+        gestationalWeeks: effectiveIsPregnant ? parseNullableNumber(gestationalWeeks) : null,
         symptoms: selectedSymptoms,
         symptomDurationDays: Number(symptomDurationDays || 0),
         medicalHistoryNotes: historyNotes,
@@ -1212,10 +1564,13 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                       <select
                         value={regSex}
                         onChange={(e) =>
-                          setRegSex(e.target.value as 'female' | 'male' | 'other')
+                          setRegSex(e.target.value as '' | 'female' | 'male' | 'other')
                         }
                         className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
                       >
+                        <option value="" disabled>
+                          {language === 'hi' ? 'लिंग चुनें' : 'Select sex'}
+                        </option>
                         <option value="female">Female (महिला)</option>
                         <option value="male">Male (पुरुष)</option>
                         <option value="other">Other (अन्य)</option>
@@ -1261,7 +1616,7 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                     <div>
                       <div className="flex items-center justify-between mb-1">
                         <label className="block text-xs font-semibold text-slate-800">
-                          {language === 'hi' ? 'गांव (Village)' : 'Village'}{' '}
+                          {language === 'hi' ? 'गांव (उत्तर प्रदेश)' : 'Village (Uttar Pradesh)'}{' '}
                           <span className="text-red-600">*</span>
                         </label>
                         <button
@@ -1279,18 +1634,25 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                         </button>
                       </div>
                       {isCustomVillage ? (
-                        <input
-                          type="text"
-                          required
-                          value={customVillageInput}
-                          onChange={(e) => setCustomVillageInput(e.target.value)}
-                          placeholder={
-                            language === 'hi'
-                              ? 'गांव का नाम दर्ज करें...'
-                              : 'Enter custom village name...'
-                          }
-                          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
-                        />
+                        <div className="space-y-1">
+                          <input
+                            type="text"
+                            required
+                            value={customVillageInput}
+                            onChange={(e) => setCustomVillageInput(e.target.value)}
+                            placeholder={
+                              language === 'hi'
+                                ? 'उत्तर प्रदेश का गांव/कस्बा दर्ज करें'
+                                : 'Enter village/town in Uttar Pradesh...'
+                            }
+                            className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
+                          />
+                          <p className="text-[11px] text-slate-500">
+                            {language === 'hi'
+                              ? 'केवल उत्तर प्रदेश (भारत) के गांव/कस्बे ही सपोर्ट किए जाते हैं।'
+                              : 'Only villages and towns within Uttar Pradesh, India are supported.'}
+                          </p>
+                        </div>
                       ) : (
                         <select
                           value={regVillage}
@@ -1884,46 +2246,47 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                 </div>
               )}
 
-              {/* Pregnancy Information */}
-              <div className="pt-2 border-t border-slate-100 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                  <label className="min-h-[44px] px-3.5 py-2 rounded-lg border border-slate-200 bg-slate-50 flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-slate-800">
-                    <input
-                      type="checkbox"
-                      checked={isPregnant}
-                      onChange={(e) => setIsPregnant(e.target.checked)}
-                      className="w-4 h-4 rounded border-slate-300 text-teal-700"
-                    />
-                    <span>
-                      {language === 'hi'
-                        ? 'मरीज वर्तमान में गर्भवती है (Currently Pregnant)'
-                        : 'Patient is currently pregnant (गर्भवती महिला)'}
-                    </span>
-                  </label>
-
-                  {isPregnant && (
-                    <div className="flex items-center gap-2">
-                      <label className="text-xs font-semibold text-slate-700 whitespace-nowrap">
-                        Gestational Weeks:
-                      </label>
+              {/* Pregnancy Information (shown only for female patients) */}
+              {selectedPatient?.sex === 'female' && (
+                <div className="pt-2 border-t border-slate-100 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <label className="min-h-[44px] px-3.5 py-2 rounded-lg border border-slate-200 bg-slate-50 flex items-center gap-2.5 cursor-pointer text-xs font-semibold text-slate-800">
                       <input
-                        type="number"
-                        min={4}
-                        max={44}
-                        value={gestationalWeeks}
-                        onChange={(e) => setGestationalWeeks(e.target.value)}
-                        placeholder="Weeks (4-44)"
-                        className="w-32 min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-300 text-sm font-mono text-slate-900"
+                        type="checkbox"
+                        checked={isPregnant}
+                        onChange={(e) => setIsPregnant(e.target.checked)}
+                        className="w-4 h-4 rounded border-slate-300 text-teal-700"
                       />
-                    </div>
-                  )}
-                </div>
-              </div>
+                      <span>
+                        {language === 'hi'
+                          ? 'मरीज वर्तमान में गर्भवती है (Currently Pregnant)'
+                          : 'Patient is currently pregnant (गर्भवती महिला)'}
+                      </span>
+                    </label>
 
-              {/* Symptoms Selection + Add Custom Symptom Button */}
+                    {isPregnant && (
+                      <div className="flex items-center gap-2">
+                        <label className="text-xs font-semibold text-slate-700 whitespace-nowrap">
+                          Gestational Weeks:
+                        </label>
+                        <input
+                          type="number"
+                          min={4}
+                          max={44}
+                          value={gestationalWeeks}
+                          onChange={(e) => setGestationalWeeks(e.target.value)}
+                          placeholder="Weeks (4-44)"
+                          className="w-32 min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-300 text-sm font-mono text-slate-900"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Symptoms Selection (urgent red-flag options + custom add below) */}
               <div className="pt-2 border-t border-slate-100 space-y-3">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div>
+                <div>
                     <label className="block text-xs font-bold text-slate-900">
                       {language === 'hi'
                         ? 'लक्षण चुनें (Reported Symptoms)'
@@ -1931,80 +2294,21 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                     </label>
                     <p className="text-xs text-slate-500">
                       {language === 'hi'
-                        ? 'मरीज के लक्षण चुनें या "+ लक्षण जोड़ें" बटन से नया लक्षण दर्ज करें।'
-                        : 'Select observed symptoms below or click "+ Add Symptom" to record a custom symptom.'}
+                        ? 'नीचे गंभीर लक्षण चुनें; अन्य लक्षणों के लिए "+ लक्षण जोड़ें" बटन का उपयोग करें।'
+                        : 'Select the urgent symptoms below; use the "+ Add Symptom" button underneath for other symptoms.'}
                     </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setShowAddSymptomForm((prev) => !prev)}
-                    className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 hover:bg-teal-100 text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>{language === 'hi' ? '+ लक्षण जोड़ें (Add Symptom)' : '+ Add Symptom'}</span>
-                  </button>
                 </div>
 
-                {/* Inline Add Custom Symptom Drawer */}
-                {showAddSymptomForm && (
-                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-bold text-slate-900">
-                        {language === 'hi'
-                          ? 'नया लक्षण जोड़ें (Add Custom Symptom)'
-                          : 'Add Custom Patient Symptom'}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setShowAddSymptomForm(false)}
-                        className="text-slate-400 hover:text-slate-600"
-                      >
-                        <X className="w-4 h-4" />
-                      </button>
-                    </div>
-                    <div className="flex flex-col sm:flex-row gap-2.5">
-                      <input
-                        type="text"
-                        value={newSymptomText}
-                        onChange={(e) => setNewSymptomText(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') {
-                            e.preventDefault();
-                            handleAddCustomSymptom();
-                          }
-                        }}
-                        placeholder={
-                          language === 'hi'
-                            ? 'उदा. जोड़ों में दर्द, पेट दर्द, उल्टी...'
-                            : 'e.g., Severe abdominal pain, joint swelling, rash...'
-                        }
-                        className="flex-1 min-h-[42px] px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm text-slate-900"
-                      />
-                      <label className="min-h-[42px] px-3 py-2 rounded-lg border border-slate-300 bg-white flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer shrink-0">
-                        <input
-                          type="checkbox"
-                          checked={newSymptomIsRedFlag}
-                          onChange={(e) => setNewSymptomIsRedFlag(e.target.checked)}
-                          className="w-4 h-4 rounded border-slate-300 text-red-600"
-                        />
-                        <span className="text-red-700">
-                          {language === 'hi' ? 'गंभीर खतरा (Urgent Sign)' : 'Urgent Danger Sign'}
-                        </span>
-                      </label>
-                      <button
-                        type="button"
-                        onClick={handleAddCustomSymptom}
-                        disabled={!newSymptomText.trim()}
-                        className="min-h-[42px] px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold hover:bg-teal-800 disabled:opacity-50 shrink-0"
-                      >
-                        {language === 'hi' ? 'जोड़ें (Add)' : 'Add to List'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {[...SYMPTOM_CATALOG, ...customSymptomsList].map((sym) => {
+                  {[
+                    ...SYMPTOM_CATALOG.filter(
+                      (s) =>
+                        s.isRedFlag &&
+                        (selectedPatient?.sex === 'female' ||
+                          s.id !== 'pregnancy_bleeding_vision')
+                    ),
+                    ...customSymptomsList,
+                  ].map((sym) => {
                     const checked = selectedSymptoms.includes(sym.id);
                     const isCustom = sym.id.startsWith('custom:') || sym.id.startsWith('urgent:');
                     return (
@@ -2069,6 +2373,73 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                     );
                   })}
                 </div>
+
+                {/* Add Custom Symptom — placed below the symptom options */}
+                <button
+                  type="button"
+                  onClick={() => setShowAddSymptomForm((prev) => !prev)}
+                  className="min-h-[42px] w-full px-3.5 py-2 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 hover:bg-teal-100 text-xs font-semibold flex items-center justify-center gap-1.5 transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>{language === 'hi' ? '+ लक्षण जोड़ें (Add Symptom)' : '+ Add Symptom'}</span>
+                </button>
+
+                {showAddSymptomForm && (
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-900">
+                        {language === 'hi'
+                          ? 'नया लक्षण जोड़ें (Add Custom Symptom)'
+                          : 'Add Custom Patient Symptom'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddSymptomForm(false)}
+                        className="text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2.5">
+                      <input
+                        type="text"
+                        value={newSymptomText}
+                        onChange={(e) => setNewSymptomText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCustomSymptom();
+                          }
+                        }}
+                        placeholder={
+                          language === 'hi'
+                            ? 'उदा. जोड़ों में दर्द, पेट दर्द, उल्टी...'
+                            : 'e.g., Severe abdominal pain, joint swelling, rash...'
+                        }
+                        className="flex-1 min-h-[42px] px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm text-slate-900"
+                      />
+                      <label className="min-h-[42px] px-3 py-2 rounded-lg border border-slate-300 bg-white flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={newSymptomIsRedFlag}
+                          onChange={(e) => setNewSymptomIsRedFlag(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-300 text-red-600"
+                        />
+                        <span className="text-red-700">
+                          {language === 'hi' ? 'गंभीर खतरा (Urgent Sign)' : 'Urgent Danger Sign'}
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleAddCustomSymptom}
+                        disabled={!newSymptomText.trim()}
+                        className="min-h-[42px] px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold hover:bg-teal-800 disabled:opacity-50 shrink-0"
+                      >
+                        {language === 'hi' ? 'जोड़ें (Add)' : 'Add to List'}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 pt-2">
                   <div>
@@ -2593,9 +2964,73 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                             ? 'Required core measurements (BP, SpO2, or Temperature) are missing. Repeat screening with complete instruments before concluding routine status.'
                             : 'All core measurements are present and within standard screening bounds. Continue routine community follow-up.'}
                     </p>
-                  </div>
+                   </div>
 
-                  {/* Reason for the Flag & Recommended Next Step */}
+                   {/* Live AI Review Suggestion (auto-updates while typing; never overrides deterministic rules) */}
+                   <div
+                     className={`p-3.5 rounded-lg border space-y-2 ${
+                       liveEvaluation.resultCategory === 'urgent_escalation'
+                         ? 'bg-red-50 border-red-200'
+                         : liveEvaluation.resultCategory === 'further_assessment_needed'
+                           ? 'bg-amber-50 border-amber-200'
+                           : liveEvaluation.resultCategory === 'incomplete_information'
+                             ? 'bg-slate-100 border-slate-200'
+                             : 'bg-emerald-50 border-emerald-200'
+                     }`}
+                   >
+                     <div className="flex flex-wrap items-center justify-between gap-2">
+                       <p className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                         <Sparkles className="w-3.5 h-3.5 text-teal-700 shrink-0" />
+                         {language === 'hi'
+                           ? 'लाइव एआई समीक्षा (नियम-आधारित परिणाम अंतिम रहेगा)'
+                           : 'Live AI Review (rules-based result is final)'}
+                       </p>
+                       <span
+                         className={`px-2.5 py-1 rounded-md border text-[11px] font-bold ${
+                           liveEvaluation.resultCategory === 'urgent_escalation'
+                             ? 'bg-red-100 border-red-300 text-red-800'
+                             : liveEvaluation.resultCategory === 'further_assessment_needed'
+                               ? 'bg-amber-100 border-amber-300 text-amber-900'
+                               : liveEvaluation.resultCategory === 'incomplete_information'
+                                 ? 'bg-slate-50 border-slate-300 text-slate-700'
+                                 : 'bg-emerald-100 border-emerald-300 text-emerald-800'
+                         }`}
+                       >
+                         {liveEvaluation.resultCategory === 'urgent_escalation'
+                           ? language === 'hi'
+                             ? 'अधिक चिकित्सा ध्यान आवश्यक 🚨'
+                             : 'MORE attention — urgent care'
+                           : liveEvaluation.resultCategory === 'further_assessment_needed'
+                             ? language === 'hi'
+                               ? 'मध्यम ध्यान — PHC जांच आवश्यक'
+                               : 'MORE attention — PHC review'
+                             : liveEvaluation.resultCategory === 'incomplete_information'
+                               ? language === 'hi'
+                                 ? 'जानकारी अधूरी — माप दर्ज करें'
+                                 : 'INCOMPLETE — record missing vitals'
+                               : language === 'hi'
+                                 ? 'कम चिकित्सा ध्यान — सामान्य फॉलो-अप'
+                                 : 'LOW attention — routine follow-up'}
+                       </span>
+                     </div>
+                     <p className="text-xs text-slate-700 leading-relaxed">
+                       {liveAiLoading
+                         ? language === 'hi'
+                           ? 'एआई रिपोर्ट की समीक्षा कर रहा है...'
+                           : 'AI is reviewing this report...'
+                         : liveReviewHasContent && liveAiNote
+                           ? liveAiNote
+                           : liveReviewHasContent && liveAiError
+                             ? language === 'hi'
+                               ? 'एआई समीक्षा अभी उपलब्ध नहीं (ऑफलाइन)। नियम-आधारित मूल्यांकन ऊपर अंतिम है।'
+                               : 'AI review unavailable right now (offline or paused). The rules-based evaluation above remains final.'
+                             : language === 'hi'
+                               ? 'लक्षण व माप दर्ज करते ही एआई समीक्षा यहां दिखेगी।'
+                               : 'Start typing symptoms or measurements — the AI review will appear here within a few seconds.'}
+                     </p>
+                   </div>
+
+                   {/* Reason for the Flag & Recommended Next Step */}
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 space-y-2.5">
                       <h4 className="text-xs font-bold text-slate-900 uppercase tracking-wide">
@@ -2755,14 +3190,14 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                             onChange={(e) => setReferralDestination(e.target.value)}
                             className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-300 text-xs text-slate-900 bg-white"
                           >
-                            <option value="Simulated PHC Rampur (Demo)">
-                              Simulated PHC Rampur (Demo)
+                            <option value="Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)">
+                              Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)
                             </option>
-                            <option value="Simulated PHC Rampur — Maternal High-Risk Clinic (Demo)">
-                              Simulated PHC Rampur — Maternal Clinic (Demo)
+                            <option value="Simulated PHC Rampur, Sitapur — Uttar Pradesh — Maternal High-Risk Clinic (Demo)">
+                              Simulated PHC Rampur, Sitapur — Uttar Pradesh — Maternal Clinic (Demo)
                             </option>
-                            <option value="Simulated CHC Sitapur Block (Demo)">
-                              Simulated CHC Sitapur Block (Demo)
+                            <option value="Simulated CHC Sitapur Block — Uttar Pradesh (Demo)">
+                              Simulated CHC Sitapur Block, Sitapur — Uttar Pradesh (Demo)
                             </option>
                           </select>
                         </div>
@@ -2828,6 +3263,14 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                     <div className="flex flex-wrap gap-2 pt-1">
                       <button
                         type="button"
+                        onClick={handlePrintPatientSummary}
+                        className="min-h-[38px] px-3 py-1.5 rounded-lg border border-emerald-500 bg-white text-emerald-900 font-semibold flex items-center gap-1.5"
+                      >
+                        <Printer className="w-3.5 h-3.5" />
+                        <span>{language === 'hi' ? 'सारांश प्रिंट' : 'Print Summary'}</span>
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => onChangeSubTab('referrals')}
                         className="min-h-[38px] px-3 py-1.5 rounded-lg bg-emerald-700 text-white font-semibold"
                       >
@@ -2849,6 +3292,18 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
               )}
 
               <div className="flex flex-col sm:flex-row sm:items-center justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={handlePrintPatientSummary}
+                  className="w-full sm:w-auto min-h-[48px] px-5 py-3 rounded-lg border border-teal-600 bg-white text-teal-800 text-sm font-semibold hover:bg-teal-50 transition-colors flex items-center justify-center gap-2"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>
+                    {language === 'hi'
+                      ? 'मरीज सारांश प्रिंट करें'
+                      : 'Print Patient Summary'}
+                  </span>
+                </button>
                 <button
                   type="submit"
                   disabled={scrSubmitting || hasSavedCurrentForm}

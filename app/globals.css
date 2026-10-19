@@ -1,1 +1,72 @@
 @import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+
+  /* Inverted neutrals: page bg (slate-50) becomes deepest, cards (white) lift above it */
+  --color-slate-50: oklch(0.156 0.028 265);
+  --color-slate-100: oklch(0.222 0.03 265);
+  --color-slate-200: oklch(0.286 0.028 265);
+  --color-slate-300: oklch(0.362 0.025 265);
+  --color-slate-400: oklch(0.6 0.03 257);
+  --color-slate-500: oklch(0.682 0.02 257);
+  --color-slate-600: oklch(0.764 0.015 257);
+  --color-slate-700: oklch(0.852 0.01 257);
+  --color-slate-800: oklch(0.922 0.007 257);
+  --color-slate-900: oklch(0.972 0.004 257);
+  --color-white: oklch(0.196 0.025 265);
+
+  /* Teal: pale tints become dark chip surfaces; solid buttons lighten so
+     flipped white text keeps contrast */
+  --color-teal-50: oklch(0.32 0.05 190);
+  --color-teal-100: oklch(0.37 0.055 190);
+  --color-teal-200: oklch(0.42 0.06 190);
+  --color-teal-600: oklch(0.66 0.12 184);
+  --color-teal-700: oklch(0.62 0.1 184);
+  --color-teal-800: oklch(0.55 0.08 186);
+  --color-teal-900: oklch(0.85 0.06 181);
+  --color-teal-950: oklch(0.92 0.04 180);
+
+  /* Red (alerts): pale tints become dark rose surfaces; labels brighten */
+  --color-red-50: oklch(0.36 0.05 20);
+  --color-red-100: oklch(0.42 0.055 20);
+  --color-red-200: oklch(0.48 0.065 20);
+  --color-red-700: oklch(0.62 0.2 25);
+  --color-red-800: oklch(0.78 0.12 20);
+  --color-red-900: oklch(0.8 0.12 20);
+  --color-red-950: oklch(0.86 0.08 20);
+
+  /* Amber (warnings) */
+  --color-amber-50: oklch(0.36 0.05 75);
+  --color-amber-100: oklch(0.42 0.055 75);
+  --color-amber-200: oklch(0.48 0.06 75);
+  --color-amber-700: oklch(0.62 0.15 55);
+  --color-amber-800: oklch(0.6 0.13 50);
+  --color-amber-900: oklch(0.82 0.13 70);
+  --color-amber-950: oklch(0.88 0.09 70);
+
+  /* Emerald (success) */
+  --color-emerald-50: oklch(0.36 0.05 165);
+  --color-emerald-100: oklch(0.42 0.055 165);
+  --color-emerald-200: oklch(0.48 0.06 165);
+  --color-emerald-700: oklch(0.62 0.11 163);
+  --color-emerald-800: oklch(0.55 0.085 164);
+  --color-emerald-900: oklch(0.85 0.09 160);
+  --color-emerald-950: oklch(0.9 0.07 160);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .theming,
+  .theming * {
+    transition:
+      background-color 150ms ease,
+      border-color 150ms ease,
+      color 150ms ease !important;
+  }
+}

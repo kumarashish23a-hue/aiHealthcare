@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Clock,
+  LayoutGrid,
   Lock,
   Search,
   Stethoscope,
@@ -151,6 +152,13 @@ export const PhcDoctorDashboard: React.FC<PhcDoctorDashboardProps> = ({
           </h1>
           <p className="text-xs text-slate-500 mt-0.5">{labels.simulatedPhcNotice}</p>
         </div>
+        <a
+          href="/doctor"
+          className="min-h-[40px] px-4 py-2 rounded-lg border border-teal-700 text-teal-800 bg-white text-xs font-semibold hover:bg-teal-50 flex items-center gap-2 shrink-0"
+        >
+          <LayoutGrid className="w-4 h-4" />
+          {labels.doctorPagesLink}
+        </a>
       </div>
 
       {/* 4 Key PHC Overview Cards (Incoming Referrals, Urgent Cases, Pending Reviews, Completed Referrals) */}

@@ -25,6 +25,9 @@ const nextConfig: NextConfig = {
     webpackMemoryOptimizations: true,
     cpus: 1,
     workerThreads: false,
+    // Disable buggy Segment Explorer devtool (it triggers "React Client Manifest"
+    // errors + error overlays in the browser on Next 15.5.28 dev servers).
+    devtoolSegmentExplorer: false,
   },
   webpack: (config, {dev}) => {
     // HMR is disabled in AI Studio via DISABLE_HMR env var.

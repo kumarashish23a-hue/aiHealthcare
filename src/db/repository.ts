@@ -20,6 +20,7 @@ import {
   ReferralStatus,
   ScreeningCategory,
   ScreeningRecord,
+  StoredProfile,
   UserRole,
 } from '../lib/types.ts';
 import {
@@ -73,6 +74,7 @@ const memoryStore = {
   referrals: [...INITIAL_SYNTHETIC_REFERRALS],
   followUps: [...INITIAL_SYNTHETIC_FOLLOW_UPS],
   auditLogs: [...INITIAL_AUDIT_LOGS],
+  profiles: [] as StoredProfile[],
   syncEvents: [] as Array<{
     syncEventId: string;
     entityType: string;
@@ -110,8 +112,8 @@ export async function getOrCreateUser(
         role: defaultRole,
         facilityName:
           defaultRole === 'doctor'
-            ? 'Simulated PHC Rampur (Demo)'
-            : 'Sub-Centre Rampur · Simulated PHC Rampur',
+            ? 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)'
+            : 'Sub-Centre Rampur · Sitapur, Uttar Pradesh',
         preferredLanguage: 'en',
         isDemo: true,
       };
@@ -134,8 +136,8 @@ export async function getOrCreateUser(
         role: defaultRole,
         facilityName:
           defaultRole === 'doctor'
-            ? 'Simulated PHC Rampur (Demo)'
-            : 'Sub-Centre Rampur · Simulated PHC Rampur',
+            ? 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)'
+            : 'Sub-Centre Rampur · Sitapur, Uttar Pradesh',
         preferredLanguage: 'en',
       })
       .onConflictDoUpdate({
@@ -345,6 +347,9 @@ export async function getAllWorkspaceData(referenceDateIso?: string) {
     referrals: [...memoryStore.referrals],
     followUps: [...memoryStore.followUps],
     auditLogs: [...memoryStore.auditLogs],
+    profiles: [...memoryStore.profiles].sort((a, b) =>
+      b.lastUsedAt.localeCompare(a.lastUsedAt)
+    ),
     metrics: calculateDashboardMetrics(
       memoryStore.patients,
       memoryStore.screenings,
@@ -485,12 +490,56 @@ export async function getAllWorkspaceData(referenceDateIso?: string) {
       referrals: mappedReferrals,
       followUps: mappedFollowUps,
       auditLogs: mappedAudit,
+      profiles: [...memoryStore.profiles].sort((a, b) =>
+        b.lastUsedAt.localeCompare(a.lastUsedAt)
+      ),
       metrics,
     };
   } catch (error) {
     console.warn('Database query failed in getAllWorkspaceData, using in-memory store:', error);
     return getFromMemory();
   }
+}
+
+/**
+ * Server-side login-profile registry (prototype build, auth switched OFF):
+ * login profiles created on ANY device are persisted in the server store so the
+ * /admin panel can list all saved ASHA workers, doctors, and PHC admins.
+ */
+export async function upsertProfileRecord(payload: {
+  uid: string;
+  role: UserRole;
+  fullName: string;
+  phoneLastFour: string;
+  facilityName: string;
+  createdAt: string;
+  lastUsedAt: string;
+}): Promise<StoredProfile> {
+  const clean: StoredProfile = {
+    uid: String(payload.uid).trim(),
+    role: payload.role,
+    fullName: String(payload.fullName).trim(),
+    phoneLastFour: String(payload.phoneLastFour).trim(),
+    facilityName: String(payload.facilityName).trim(),
+    createdAt: payload.createdAt,
+    lastUsedAt: payload.lastUsedAt,
+  };
+
+  memoryStore.profiles = [
+    ...memoryStore.profiles.filter((p) => p.uid !== clean.uid),
+    clean,
+  ].sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt));
+
+  await recordAuditLog({
+    actorUid: clean.uid,
+    actorRole: clean.role,
+    action: 'save_profile',
+    targetType: 'profile',
+    targetId: clean.uid,
+    summary: `Login profile saved: ${clean.fullName} (${clean.role}) at ${clean.facilityName}`,
+  });
+
+  return clean;
 }
 
 export async function recordAuditLog(params: {

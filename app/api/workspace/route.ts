@@ -9,7 +9,9 @@ import {
   logSyncEventInDb,
   updateFollowUpRecord,
   updateReferralByDoctor,
+  upsertProfileRecord,
 } from '@/src/db/repository';
+import type { UserRole } from '@/src/lib/types';
 import { evaluateScreening, patientRegistrationSchema } from '@/src/lib/screening-engine';
 
 export async function GET(req: NextRequest) {
@@ -33,6 +35,45 @@ export async function POST(req: NextRequest) {
     const actor = await authenticateRequest(req);
     const body = await req.json();
     const { action, payload, syncEventId } = body;
+
+    if (action === 'save_profile') {
+      const validatedRole = ['health_worker', 'doctor', 'phc_admin'].includes(
+        String(payload.role)
+      )
+        ? (payload.role as UserRole)
+        : null;
+      if (
+        !validatedRole ||
+        typeof payload.uid !== 'string' ||
+        !payload.uid.trim() ||
+        typeof payload.fullName !== 'string' ||
+        payload.fullName.trim().length < 2 ||
+        typeof payload.phoneLastFour !== 'string' ||
+        !/^\d{4}$/.test(payload.phoneLastFour)
+      ) {
+        return NextResponse.json(
+          { ok: false, error: 'Invalid login profile payload' },
+          { status: 400 }
+        );
+      }
+      if (actor.role !== validatedRole) {
+        return NextResponse.json(
+          { ok: false, error: 'Profile role does not match authenticated session role' },
+          { status: 403 }
+        );
+      }
+      const savedProfile = await upsertProfileRecord({
+        uid: payload.uid,
+        role: validatedRole,
+        fullName: payload.fullName,
+        phoneLastFour: payload.phoneLastFour,
+        facilityName: typeof payload.facilityName === 'string' ? payload.facilityName : '',
+        createdAt: typeof payload.createdAt === 'string' ? payload.createdAt : new Date().toISOString(),
+        lastUsedAt:
+          typeof payload.lastUsedAt === 'string' ? payload.lastUsedAt : new Date().toISOString(),
+      });
+      return NextResponse.json({ ok: true, profile: savedProfile });
+    }
 
     if (action === 'register_patient') {
       const parsed = patientRegistrationSchema.safeParse(payload);
@@ -163,7 +204,7 @@ export async function POST(req: NextRequest) {
         screeningId: payload.screeningId,
         priority: payload.priority || 'further_assessment_needed',
         reasonForReferral: payload.reasonForReferral,
-        destinationFacility: payload.destinationFacility || 'Simulated PHC Rampur (Demo)',
+        destinationFacility: payload.destinationFacility || 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)',
         createdDate: payload.createdDate || new Date().toISOString().slice(0, 10),
       });
 

@@ -289,7 +289,7 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
                   <strong>{screening.patientId}</strong>
                 </p>
                 <p className="text-slate-600">
-                  Facility: {referral?.destinationFacility || 'Simulated PHC Rampur (Demo)'} · Priority:{' '}
+                  Facility: {referral?.destinationFacility || 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)'} · Priority:{' '}
                   <strong>{formatCategoryLabel(screening.resultCategory, 'en')}</strong>
                 </p>
                 <p className="text-slate-500">

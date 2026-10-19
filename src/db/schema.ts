@@ -7,7 +7,7 @@ export const users = pgTable('users', {
   email: text('email').notNull(),
   fullName: text('full_name').notNull().default('ASHA Health Worker'),
   role: text('role').notNull().default('health_worker'), // 'health_worker' | 'doctor' | 'phc_admin'
-  facilityName: text('facility_name').notNull().default('Simulated PHC Rampur'),
+  facilityName: text('facility_name').notNull().default('Simulated PHC Rampur, Sitapur — Uttar Pradesh'),
   preferredLanguage: text('preferred_language').notNull().default('en'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),

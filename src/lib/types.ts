@@ -37,6 +37,16 @@ export interface AppUser {
   };
 }
 
+export interface StoredProfile {
+  uid: string;
+  role: UserRole;
+  fullName: string;
+  phoneLastFour: string;
+  facilityName: string;
+  createdAt: string;
+  lastUsedAt: string;
+}
+
 export interface PatientRecord {
   patientId: string;
   fullName: string;

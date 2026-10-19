@@ -1,14 +1,12 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { onAuthStateChanged, signInWithPopup, signOut, User } from 'firebase/auth';
 import {
   AlertTriangle,
   Globe,
   HeartPulse,
   Home,
   Lock,
-  LogIn,
   LogOut,
   RefreshCw,
   Send,
@@ -18,7 +16,6 @@ import {
   Wifi,
   WifiOff,
 } from 'lucide-react';
-import { auth, googleAuthProvider } from '@/src/lib/firebase';
 import {
   AppUser,
   AuditLogEntry,
@@ -58,6 +55,8 @@ import { processSyncQueue } from '@/src/lib/sync-engine';
 import { HealthWorkerView } from './HealthWorkerView';
 import { PhcDoctorDashboard } from './PhcDoctorDashboard';
 import { OfflinePrivacyView } from './OfflinePrivacyView';
+import ThemeToggle from './ThemeToggle';
+import { LoginPanel, type LocalProfile } from './LoginPanel';
 import { PatientScreeningModal } from './PatientScreeningModal';
 
 type MainSection = 'worker' | 'phc' | 'offline';
@@ -69,13 +68,15 @@ export const SwasthyaSetuApp: React.FC = () => {
   const [workerSubTab, setWorkerSubTab] = useState<WorkerSubTab>('overview');
   const [language, setLanguage] = useState<LanguageCode>('en');
 
-  // Auth & Role Persona State (ID token kept strictly in memory, never localStorage)
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [idTokenInMemory, setIdTokenInMemory] = useState<string | null>(null);
+  // Local Profile Session State (real auth is switched OFF for this prototype build)
   const [activeRole, setActiveRole] = useState<UserRole>('health_worker');
   const [isSessionLocked, setIsSessionLocked] = useState<boolean>(false);
   const [unlockPin, setUnlockPin] = useState<string>('');
   const [unlockError, setUnlockError] = useState<string>('');
+
+  // Login Panel State (gate before entering the workspace)
+  const [sessionStarted, setSessionStarted] = useState<boolean>(false);
+  const [sessionProfile, setSessionProfile] = useState<LocalProfile | null>(null);
 
   // Network & Offline Sync State (initialized to true so SSR and initial hydration match)
   const [browserOnline, setBrowserOnline] = useState<boolean>(true);
@@ -102,57 +103,49 @@ export const SwasthyaSetuApp: React.FC = () => {
   const storageSafety = useMemo(() => checkDeviceOfflineStorageSafety(), []);
 
   const currentUser: AppUser = useMemo(() => {
-    if (firebaseUser) {
+    if (sessionProfile) {
       return {
-        uid: firebaseUser.uid,
-        email: firebaseUser.email || 'user@swasthyasetu.org',
-        fullName: firebaseUser.displayName || firebaseUser.email || 'Authenticated Clinician',
+        uid: sessionProfile.uid,
+        email: `${sessionProfile.uid.toLowerCase()}@swasthyasetu.local`,
+        fullName: sessionProfile.fullName,
         role: activeRole,
-        facilityName:
-          activeRole === 'doctor'
-            ? 'Simulated PHC Rampur (Demo)'
-            : 'Sub-Centre Rampur · Simulated PHC Rampur',
+        facilityName: sessionProfile.facilityName,
         preferredLanguage: language,
         isDemo: false,
       };
     }
     return activeRole === 'doctor' ? DEMO_USERS.doctor : DEMO_USERS.health_worker;
-  }, [firebaseUser, activeRole, language]);
+  }, [sessionProfile, activeRole, language]);
 
   const getAuthHeaders = useCallback(
     (overrideRole?: UserRole): Record<string, string> => {
       const targetRole = overrideRole || activeRole;
-      const bearer = idTokenInMemory
-        ? `Bearer ${idTokenInMemory}`
-        : targetRole === 'doctor'
-          ? 'Bearer demo-session-doctor'
-          : 'Bearer demo-session-asha';
+      const bearer =
+        targetRole === 'doctor' ? 'Bearer demo-session-doctor' : 'Bearer demo-session-asha';
       return {
         'Content-Type': 'application/json',
         Authorization: bearer,
         'X-Active-Role': targetRole,
       };
     },
-    [idTokenInMemory, activeRole]
+    [activeRole]
   );
 
-  // Monitor Firebase Auth state
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (usr) => {
-      setFirebaseUser(usr);
-      if (usr) {
-        try {
-          const token = await usr.getIdToken();
-          setIdTokenInMemory(token);
-        } catch {
-          setIdTokenInMemory(null);
-        }
-      } else {
-        setIdTokenInMemory(null);
-      }
-    });
-    return () => unsub();
-  }, []);
+  // Enter workspace with a profile saved from the Login Panel (no auth required)
+  const handleEnterWorkspace = (profile: LocalProfile): void => {
+    setActiveRole(profile.role);
+    setSessionProfile(profile);
+    setSessionStarted(true);
+    if (mainSection === 'phc' && profile.role !== 'doctor') {
+      setMainSection('worker');
+    }
+  };
+
+  // Exit back to the login panel (clears only the session, saved profiles remain)
+  const handleExitToLogin = (): void => {
+    setSessionStarted(false);
+    setSessionProfile(null);
+  };
 
   // Monitor Browser Online/Offline events
   useEffect(() => {
@@ -735,7 +728,7 @@ export const SwasthyaSetuApp: React.FC = () => {
         screeningId: screening.screeningId,
         priority: screening.resultCategory,
         reasonForReferral: reasonSummary,
-        destinationFacility: 'Simulated PHC Rampur (Demo)',
+        destinationFacility: 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)',
         status: 'pending',
         assignedProfessional: 'Dr. Rajesh Verma (MO-PHC)',
         doctorNotes: '',
@@ -761,7 +754,7 @@ export const SwasthyaSetuApp: React.FC = () => {
             screeningId: screening.screeningId,
             priority: screening.resultCategory,
             reasonForReferral: reasonSummary,
-            destinationFacility: 'Simulated PHC Rampur (Demo)',
+            destinationFacility: 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)',
             createdDate: offlineRef.createdDate,
           },
         },
@@ -786,7 +779,7 @@ export const SwasthyaSetuApp: React.FC = () => {
           screeningId: screening.screeningId,
           priority: screening.resultCategory,
           reasonForReferral: reasonSummary,
-          destinationFacility: 'Simulated PHC Rampur (Demo)',
+          destinationFacility: 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)',
           createdDate: new Date().toISOString().slice(0, 10),
         },
       }),
@@ -1082,6 +1075,17 @@ export const SwasthyaSetuApp: React.FC = () => {
     );
   };
 
+  // Login gate: role-selection panel before entering the workspace
+  if (!sessionStarted) {
+    return (
+      <LoginPanel
+        language={language}
+        onSetLanguage={setLanguage}
+        onEnter={handleEnterWorkspace}
+      />
+    );
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 flex flex-col md:flex-row">
       {/* =====================================================================
@@ -1089,20 +1093,21 @@ export const SwasthyaSetuApp: React.FC = () => {
          ===================================================================== */}
       <aside className="hidden md:flex md:w-64 md:flex-col md:fixed md:inset-y-0 bg-white border-r border-slate-200 z-30">
         {/* Brand Header */}
-        <div className="px-5 py-4 border-b border-slate-200">
+        <div className="px-5 py-4 border-b border-slate-200 flex items-center justify-between gap-2">
           <button
             type="button"
             onClick={() => {
               setMainSection('worker');
               setWorkerSubTab('overview');
             }}
-            className="text-left block"
+            className="text-left block min-w-0"
           >
             <span className="text-lg font-bold tracking-tight text-teal-800 block">
               SwasthyaSetu AI
             </span>
             <span className="text-xs text-slate-500 block mt-0.5">{labels.appSubtitle}</span>
           </button>
+          <ThemeToggle />
         </div>
         {/* Navigation Links */}
         <nav className="flex-1 px-3 py-4 space-y-1">
@@ -1267,31 +1272,15 @@ export const SwasthyaSetuApp: React.FC = () => {
               {simulatedOffline ? labels.simulateOnlineBtn : labels.simulateOfflineBtn}
             </button>
 
-            {firebaseUser ? (
-              <button
-                type="button"
-                onClick={() => signOut(auth)}
-                className="text-[11px] font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1"
-              >
-                <LogOut className="w-3 h-3" />
-                <span>Sign Out</span>
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    await signInWithPopup(auth, googleAuthProvider);
-                  } catch {
-                    // Popup closed
-                  }
-                }}
-                className="text-[11px] font-medium text-teal-800 hover:underline flex items-center gap-1"
-              >
-                <LogIn className="w-3 h-3" />
-                <span>Sign In</span>
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleExitToLogin}
+              title="Exit to profile selection"
+              className="text-[11px] font-medium text-slate-600 hover:text-slate-900 flex items-center gap-1"
+            >
+              <LogOut className="w-3 h-3" />
+              <span>{language === 'hi' ? 'प्रोफाइल बदलें' : 'Switch Profile'}</span>
+            </button>
           </div>
         </div>
       </aside>
@@ -1313,6 +1302,7 @@ export const SwasthyaSetuApp: React.FC = () => {
 
         <div className="flex items-center gap-1.5 shrink-0">
           {renderConnectionStatusBadge()}
+          <ThemeToggle className="min-h-[34px]! min-w-[34px]! px-1.5!" />
 
           {/* Doctor mobile toggle: Only visible to Doctor */}
           {activeRole === 'doctor' && (
