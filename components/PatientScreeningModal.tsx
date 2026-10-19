@@ -28,7 +28,7 @@ import {
   formatCategoryLabel,
   formatFollowUpStatus,
   formatReferralStatus,
-  SYMPTOM_CATALOG,
+  formatSymptomLabel,
   UI_LABELS,
 } from '@/src/lib/i18n';
 import { formatAbhaId } from '@/src/lib/screening-engine';
@@ -454,7 +454,7 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
                 <span className="font-semibold text-slate-900">Reported Symptoms: </span>
                 {screening.symptoms.length > 0
                   ? screening.symptoms
-                      .map((id) => SYMPTOM_CATALOG.find((s) => s.id === id)?.labelEn || id)
+                      .map((id) => formatSymptomLabel(id, language).label)
                       .join(' · ')
                   : 'No active symptoms reported'}
               </p>

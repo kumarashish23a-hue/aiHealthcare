@@ -1,4 +1,3 @@
-import { defineConfig } from 'drizzle-kit';
 import * as dotenv from 'dotenv';
 
 dotenv.config();
@@ -21,10 +20,10 @@ if (!password) {
   throw new Error('SQL_ADMIN_PASSWORD must be set in environment variables.');
 }
 
-export default defineConfig({
+const drizzleConfig = {
   schema: './src/db/schema.ts',
   out: './drizzle',
-  dialect: 'postgresql',
+  dialect: 'postgresql' as const,
   schemaFilter: ['public'],
   dbCredentials: {
     host: sqlHost,
@@ -34,4 +33,6 @@ export default defineConfig({
     ssl: false,
   },
   verbose: true,
-});
+};
+
+export default drizzleConfig;

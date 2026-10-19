@@ -276,7 +276,7 @@ export function evaluateScreening(input: ScreeningInput): ScreeningEvaluationRes
 
   const flaggedReasons: FlaggedReason[] = [];
 
-  // 1. Evaluate Red-Flag Symptoms
+  // 1. Evaluate Red-Flag Symptoms (Catalog + Custom Urgent Symptoms)
   const selectedSymptoms = input.symptoms || [];
   for (const symId of selectedSymptoms) {
     const catalogItem = SYMPTOM_CATALOG.find((s) => s.id === symId);
@@ -293,6 +293,21 @@ export function evaluateScreening(input: ScreeningInput): ScreeningEvaluationRes
           'खतरे के लक्षण दिखने पर तुरंत प्राथमिक स्वास्थ्य केंद्र (PHC) के चिकित्सा अधिकारी द्वारा जांच आवश्यक है।',
         observedValue: catalogItem.labelEn,
         referenceRule: 'Prototype Frontline Red-Flag Escalation Rule #RF-01',
+      });
+    } else if (symId.startsWith('urgent:')) {
+      const customLabel = symId.replace(/^urgent:/, '').trim();
+      flaggedReasons.push({
+        code: 'RED_FLAG_CUSTOM_URGENT',
+        field: 'symptoms',
+        severity: 'urgent',
+        titleEn: `Urgent danger symptom reported: ${customLabel}`,
+        titleHi: `गंभीर खतरे का लक्षण: ${customLabel}`,
+        explanationEn:
+          'Presence of an urgent clinical danger sign requires immediate medical officer evaluation at the nearest Primary Healthcare Centre.',
+        explanationHi:
+          'खतरे के लक्षण दिखने पर तुरंत प्राथमिक स्वास्थ्य केंद्र (PHC) के चिकित्सा अधिकारी द्वारा जांच आवश्यक है।',
+        observedValue: customLabel,
+        referenceRule: 'Prototype Frontline Red-Flag Escalation Rule #RF-CUSTOM',
       });
     }
   }
@@ -504,8 +519,10 @@ export function evaluateScreening(input: ScreeningInput): ScreeningEvaluationRes
 
   // 8. Evaluate Moderate Symptoms & Prolonged Duration
   const nonRedFlagSymptoms = selectedSymptoms.filter((id) => {
+    if (id.startsWith('urgent:')) return false;
     const item = SYMPTOM_CATALOG.find((s) => s.id === id);
-    return item && !item.isRedFlag;
+    if (item) return !item.isRedFlag;
+    return true; // custom standard symptom
   });
 
   if (selectedSymptoms.includes('persistent_cough_2w') || (input.symptomDurationDays >= 14 && nonRedFlagSymptoms.length > 0)) {
@@ -522,7 +539,7 @@ export function evaluateScreening(input: ScreeningInput): ScreeningEvaluationRes
     });
   } else if (nonRedFlagSymptoms.length >= 2) {
     const names = nonRedFlagSymptoms
-      .map((id) => SYMPTOM_CATALOG.find((s) => s.id === id)?.labelEn || id)
+      .map((id) => SYMPTOM_CATALOG.find((s) => s.id === id)?.labelEn || id.replace(/^custom:/, ''))
       .join(', ');
     flaggedReasons.push({
       code: 'MULTIPLE_SYMPTOMS_MODERATE',

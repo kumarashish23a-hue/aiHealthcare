@@ -22,6 +22,7 @@ import { auth, googleAuthProvider } from '@/src/lib/firebase';
 import {
   AppUser,
   AuditLogEntry,
+  CbacInput,
   FollowUpRecord,
   FollowUpStatus,
   LanguageCode,
@@ -460,6 +461,7 @@ export const SwasthyaSetuApp: React.FC = () => {
     referralDestination: string;
     customFollowUpDate?: string;
     customFollowUpNotes?: string;
+    cbacInput?: CbacInput;
   }): Promise<{
     ok: boolean;
     message: string;
@@ -482,6 +484,7 @@ export const SwasthyaSetuApp: React.FC = () => {
       symptoms: payload.symptoms,
       symptomDurationDays: payload.symptomDurationDays,
       medicalHistoryNotes: payload.medicalHistoryNotes,
+      cbacInput: payload.cbacInput,
     });
 
     if (!evaluation.isValid) {

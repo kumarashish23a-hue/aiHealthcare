@@ -8,10 +8,10 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock,
-  FlaskConical,
   HeartPulse,
   MapPin,
   Plus,
+  RotateCcw,
   Search,
   Send,
   ShieldAlert,
@@ -20,6 +20,7 @@ import {
   Users,
   Volume2,
   VolumeX,
+  X,
 } from 'lucide-react';
 import {
   CbacInput,
@@ -39,6 +40,7 @@ import {
   KNOWN_CONDITIONS_CATALOG,
   SYMPTOM_CATALOG,
   UI_LABELS,
+  VILLAGE_CATALOG,
 } from '@/src/lib/i18n';
 import { evaluateCbacScore, evaluateScreening, formatAbhaId } from '@/src/lib/screening-engine';
 import { offlineDb } from '@/src/lib/offline-db';
@@ -127,13 +129,15 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
   const [patientDirectorySearch, setPatientDirectorySearch] = useState('');
   const [showRegistrationForm, setShowRegistrationForm] = useState(true);
 
-  // --- Patient Registration Form State ---
-  const [regId, setRegId] = useState('PAT-RMP-1007');
+  // --- Patient Registration Form State (No pre-set clinical data) ---
+  const [regId, setRegId] = useState('PAT-RMP-1001');
   const [regName, setRegName] = useState('');
-  const [regAge, setRegAge] = useState('32');
+  const [regAge, setRegAge] = useState('');
   const [regSex, setRegSex] = useState<'female' | 'male' | 'other'>('female');
   const [regIsPregnant, setRegIsPregnant] = useState(false);
-  const [regVillage, setRegVillage] = useState('Rampur');
+  const [regVillage, setRegVillage] = useState(VILLAGE_CATALOG[0]);
+  const [customVillageInput, setCustomVillageInput] = useState('');
+  const [isCustomVillage, setIsCustomVillage] = useState(false);
   const [regBlock] = useState('Sitapur Rural');
   const [regPhone4, setRegPhone4] = useState('');
   const [regConditions, setRegConditions] = useState<string[]>([]);
@@ -144,22 +148,28 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     text: string;
   } | null>(null);
 
-  // --- Guided Screening Form State ---
+  // --- Guided Screening Form State (Clean, empty defaults without pre-set vitals) ---
   const [patientSearchQuery, setPatientSearchQuery] = useState('');
   const [selectedPatientId, setSelectedPatientId] = useState<string>(
-    patients[0]?.patientId || 'PAT-RMP-1001'
+    patients[0]?.patientId || ''
   );
-  const [systolicBp, setSystolicBp] = useState<string>('122');
-  const [diastolicBp, setDiastolicBp] = useState<string>('78');
-  const [spo2Percent, setSpo2Percent] = useState<string>('98');
-  const [temperatureC, setTemperatureC] = useState<string>('37.0');
-  const [heartRateBpm, setHeartRateBpm] = useState<string>('76');
-  const [glucoseMgDl, setGlucoseMgDl] = useState<string>('110');
-  const [hemoglobinGDl, setHemoglobinGDl] = useState<string>('12.0');
-  const [respRateBpm, setRespRateBpm] = useState<string>('16');
+  const [systolicBp, setSystolicBp] = useState<string>('');
+  const [diastolicBp, setDiastolicBp] = useState<string>('');
+  const [spo2Percent, setSpo2Percent] = useState<string>('');
+  const [temperatureC, setTemperatureC] = useState<string>('');
+  const [heartRateBpm, setHeartRateBpm] = useState<string>('');
+  const [glucoseMgDl, setGlucoseMgDl] = useState<string>('');
+  const [hemoglobinGDl, setHemoglobinGDl] = useState<string>('');
+  const [respRateBpm, setRespRateBpm] = useState<string>('');
   const [isPregnant, setIsPregnant] = useState<boolean>(false);
   const [gestationalWeeks, setGestationalWeeks] = useState<string>('');
   const [selectedSymptoms, setSelectedSymptoms] = useState<string[]>([]);
+  const [customSymptomsList, setCustomSymptomsList] = useState<
+    { id: string; labelEn: string; labelHi: string; isRedFlag: boolean }[]
+  >([]);
+  const [showAddSymptomForm, setShowAddSymptomForm] = useState<boolean>(false);
+  const [newSymptomText, setNewSymptomText] = useState<string>('');
+  const [newSymptomIsRedFlag, setNewSymptomIsRedFlag] = useState<boolean>(false);
   const [symptomDurationDays, setSymptomDurationDays] = useState<string>('0');
   const [historyNotes, setHistoryNotes] = useState<string>('');
   const [aiNote, setAiNote] = useState<string>('');
@@ -187,7 +197,7 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
 
   // --- MoHFW CBAC (Community Based Assessment Checklist) NCD Risk State ---
   const [cbacInput, setCbacInput] = useState<CbacInput>({
-    ageScore: 1,
+    ageScore: 0,
     tobaccoScore: 0,
     alcoholScore: 0,
     waistScore: 0,
@@ -201,6 +211,14 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
   // --- Referrals Filter State ---
   const [referralStatusFilter, setReferralStatusFilter] = useState<string>('all');
   const [referralSearch, setReferralSearch] = useState<string>('');
+
+  const availableVillages = useMemo(() => {
+    const set = new Set<string>(VILLAGE_CATALOG);
+    for (const p of patients) {
+      if (p.village) set.add(p.village);
+    }
+    return Array.from(set);
+  }, [patients]);
 
   const effectiveSelectedPatientId = useMemo(() => {
     if (patients.length > 0 && !patients.some((p) => p.patientId === selectedPatientId)) {
@@ -404,73 +422,27 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     return d.toISOString().slice(0, 10);
   }, [liveEvaluation.suggestedFollowUpDays]);
 
-  const applyClinicalPreset = (
-    preset: 'urgent_htn' | 'maternal_risk' | 'incomplete_vitals' | 'routine_normal'
-  ) => {
-    setScrFeedback(null);
-    setLastSavedSignature(null);
-    setAiNote('');
-    if (preset === 'urgent_htn') {
-      setSystolicBp('188');
-      setDiastolicBp('116');
-      setSpo2Percent('90');
-      setTemperatureC('37.4');
-      setHeartRateBpm('106');
-      setGlucoseMgDl('175');
-      setHemoglobinGDl('11.8');
-      setRespRateBpm('26');
-      setIsPregnant(false);
-      setGestationalWeeks('');
-      setSelectedSymptoms(['chest_pain', 'headache_dizziness']);
-      setSymptomDurationDays('2');
-      setHistoryNotes('Severe blood pressure elevation with chest tightness and SpO2 90%.');
-      setCreateReferralChecked(true);
-    } else if (preset === 'maternal_risk') {
-      setSystolicBp('146');
-      setDiastolicBp('95');
-      setSpo2Percent('97');
-      setTemperatureC('37.0');
-      setHeartRateBpm('94');
-      setGlucoseMgDl('112');
-      setHemoglobinGDl('8.2');
-      setRespRateBpm('20');
-      setIsPregnant(true);
-      setGestationalWeeks('30');
-      setSelectedSymptoms(['pregnancy_bleeding_vision', 'pedal_edema']);
-      setSymptomDurationDays('3');
-      setHistoryNotes('Pregnant 30 weeks; new blurred vision, ankle swelling, and BP 146/95 mmHg.');
-      setCreateReferralChecked(true);
-    } else if (preset === 'incomplete_vitals') {
-      setSystolicBp('124');
-      setDiastolicBp('80');
-      setSpo2Percent('');
-      setTemperatureC('');
-      setHeartRateBpm('76');
-      setGlucoseMgDl('');
-      setHemoglobinGDl('');
-      setRespRateBpm('16');
-      setIsPregnant(false);
-      setGestationalWeeks('');
-      setSelectedSymptoms(['fatigue_pallor']);
-      setSymptomDurationDays('5');
-      setHistoryNotes('Pulse oximeter and thermometer unavailable during home visit.');
-      setCreateReferralChecked(false);
-    } else {
-      setSystolicBp('118');
-      setDiastolicBp('76');
-      setSpo2Percent('98');
-      setTemperatureC('36.8');
-      setHeartRateBpm('72');
-      setGlucoseMgDl('104');
-      setHemoglobinGDl('12.4');
-      setRespRateBpm('16');
-      setIsPregnant(false);
-      setGestationalWeeks('');
-      setSelectedSymptoms([]);
-      setSymptomDurationDays('0');
-      setHistoryNotes('Routine wellness check; all measurements within normal range.');
-      setCreateReferralChecked(false);
+  const handleAddCustomSymptom = () => {
+    const trimmed = newSymptomText.trim();
+    if (!trimmed) return;
+    const customId = newSymptomIsRedFlag ? `urgent:${trimmed}` : `custom:${trimmed}`;
+    if (!customSymptomsList.some((s) => s.id === customId)) {
+      setCustomSymptomsList((prev) => [
+        ...prev,
+        {
+          id: customId,
+          labelEn: trimmed,
+          labelHi: trimmed,
+          isRedFlag: newSymptomIsRedFlag,
+        },
+      ]);
     }
+    if (!selectedSymptoms.includes(customId)) {
+      setSelectedSymptoms((prev) => [...prev, customId]);
+    }
+    setNewSymptomText('');
+    setNewSymptomIsRedFlag(false);
+    setShowAddSymptomForm(false);
   };
 
   const handleRequestAiNote = async () => {
@@ -559,13 +531,29 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
         conditionsToSave.push('Pregnant');
       }
 
+      const finalVillage = isCustomVillage
+        ? customVillageInput.trim() || regVillage.trim()
+        : regVillage.trim();
+
+      if (!finalVillage || finalVillage.length < 2) {
+        setRegFeedback({
+          type: 'error',
+          text:
+            language === 'hi'
+              ? 'कृपया गांव का नाम चुनें या दर्ज करें।'
+              : 'Please select or enter a valid village name.',
+        });
+        setRegSubmitting(false);
+        return;
+      }
+
       const savedPatientId = regId.trim().toUpperCase();
       const res = await onRegisterPatient({
         patientId: savedPatientId,
         fullName: regName.trim(),
         ageYears: Number(regAge),
         sex: regSex,
-        village: regVillage.trim(),
+        village: finalVillage,
         blockName: regBlock.trim(),
         phoneLastFour: regPhone4.trim(),
         consentObtained: regConsent,
@@ -583,11 +571,14 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
           text: res.message,
         });
         setRegName('');
+        setRegAge('');
         setRegPhone4('');
         setRegConditions([]);
         setRegIsPregnant(false);
         setRegConsent(false);
-        setRegId(`PAT-RMP-${Math.floor(1007 + Math.random() * 8900)}`);
+        setCustomVillageInput('');
+        setIsCustomVillage(false);
+        setRegId(`PAT-RMP-${Math.floor(1002 + Math.random() * 8900)}`);
       } else {
         setRegFeedback({
           type: 'error',
@@ -853,8 +844,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                 </p>
               </div>
             </div>
-            <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
-              {['all', 'Rampur', 'Khairabad', 'Chandpur', 'Maholi'].map((v) => (
+            <div className="flex flex-wrap items-center gap-1.5 p-1.5 bg-slate-100 rounded-lg max-h-28 overflow-y-auto">
+              {['all', ...availableVillages].map((v) => (
                 <button
                   key={v}
                   type="button"
@@ -1268,20 +1259,51 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-xs font-semibold text-slate-800 mb-1">
-                        {language === 'hi' ? 'गांव (Village)' : 'Village'}{' '}
-                        <span className="text-red-600">*</span>
-                      </label>
-                      <select
-                        value={regVillage}
-                        onChange={(e) => setRegVillage(e.target.value)}
-                        className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
-                      >
-                        <option value="Rampur">Rampur</option>
-                        <option value="Khairabad">Khairabad</option>
-                        <option value="Chandpur">Chandpur</option>
-                        <option value="Maholi">Maholi</option>
-                      </select>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="block text-xs font-semibold text-slate-800">
+                          {language === 'hi' ? 'गांव (Village)' : 'Village'}{' '}
+                          <span className="text-red-600">*</span>
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => setIsCustomVillage((prev) => !prev)}
+                          className="text-[11px] font-semibold text-teal-700 hover:underline"
+                        >
+                          {isCustomVillage
+                            ? language === 'hi'
+                              ? 'सूची से चुनें'
+                              : 'Select from list'
+                            : language === 'hi'
+                              ? '+ अन्य गांव जोड़ें'
+                              : '+ Add other village'}
+                        </button>
+                      </div>
+                      {isCustomVillage ? (
+                        <input
+                          type="text"
+                          required
+                          value={customVillageInput}
+                          onChange={(e) => setCustomVillageInput(e.target.value)}
+                          placeholder={
+                            language === 'hi'
+                              ? 'गांव का नाम दर्ज करें...'
+                              : 'Enter custom village name...'
+                          }
+                          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
+                        />
+                      ) : (
+                        <select
+                          value={regVillage}
+                          onChange={(e) => setRegVillage(e.target.value)}
+                          className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
+                        >
+                          {availableVillages.map((v) => (
+                            <option key={v} value={v}>
+                              {v}
+                            </option>
+                          ))}
+                        </select>
+                      )}
                     </div>
 
                     <div>
@@ -1898,21 +1920,97 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                 </div>
               </div>
 
-              {/* Symptoms Selection */}
+              {/* Symptoms Selection + Add Custom Symptom Button */}
               <div className="pt-2 border-t border-slate-100 space-y-3">
-                <label className="block text-xs font-bold text-slate-900">
-                  {language === 'hi'
-                    ? 'लक्षण चुनें (Reported Symptoms)'
-                    : 'Reported Symptoms (Select all that apply)'}
-                </label>
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-900">
+                      {language === 'hi'
+                        ? 'लक्षण चुनें (Reported Symptoms)'
+                        : 'Reported Symptoms (Select all that apply)'}
+                    </label>
+                    <p className="text-xs text-slate-500">
+                      {language === 'hi'
+                        ? 'मरीज के लक्षण चुनें या "+ लक्षण जोड़ें" बटन से नया लक्षण दर्ज करें।'
+                        : 'Select observed symptoms below or click "+ Add Symptom" to record a custom symptom.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowAddSymptomForm((prev) => !prev)}
+                    className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-teal-50 border border-teal-200 text-teal-800 hover:bg-teal-100 text-xs font-semibold flex items-center gap-1.5 transition-colors shrink-0"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>{language === 'hi' ? '+ लक्षण जोड़ें (Add Symptom)' : '+ Add Symptom'}</span>
+                  </button>
+                </div>
+
+                {/* Inline Add Custom Symptom Drawer */}
+                {showAddSymptomForm && (
+                  <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-900">
+                        {language === 'hi'
+                          ? 'नया लक्षण जोड़ें (Add Custom Symptom)'
+                          : 'Add Custom Patient Symptom'}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setShowAddSymptomForm(false)}
+                        className="text-slate-400 hover:text-slate-600"
+                      >
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2.5">
+                      <input
+                        type="text"
+                        value={newSymptomText}
+                        onChange={(e) => setNewSymptomText(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault();
+                            handleAddCustomSymptom();
+                          }
+                        }}
+                        placeholder={
+                          language === 'hi'
+                            ? 'उदा. जोड़ों में दर्द, पेट दर्द, उल्टी...'
+                            : 'e.g., Severe abdominal pain, joint swelling, rash...'
+                        }
+                        className="flex-1 min-h-[42px] px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm text-slate-900"
+                      />
+                      <label className="min-h-[42px] px-3 py-2 rounded-lg border border-slate-300 bg-white flex items-center gap-2 text-xs font-semibold text-slate-800 cursor-pointer shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={newSymptomIsRedFlag}
+                          onChange={(e) => setNewSymptomIsRedFlag(e.target.checked)}
+                          className="w-4 h-4 rounded border-slate-300 text-red-600"
+                        />
+                        <span className="text-red-700">
+                          {language === 'hi' ? 'गंभीर खतरा (Urgent Sign)' : 'Urgent Danger Sign'}
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleAddCustomSymptom}
+                        disabled={!newSymptomText.trim()}
+                        className="min-h-[42px] px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold hover:bg-teal-800 disabled:opacity-50 shrink-0"
+                      >
+                        {language === 'hi' ? 'जोड़ें (Add)' : 'Add to List'}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                  {SYMPTOM_CATALOG.map((sym) => {
+                  {[...SYMPTOM_CATALOG, ...customSymptomsList].map((sym) => {
                     const checked = selectedSymptoms.includes(sym.id);
+                    const isCustom = sym.id.startsWith('custom:') || sym.id.startsWith('urgent:');
                     return (
                       <label
                         key={sym.id}
-                        className={`min-h-[44px] p-3 rounded-lg border text-xs font-medium flex items-start gap-2.5 cursor-pointer ${
+                        className={`min-h-[44px] p-3 rounded-lg border text-xs font-medium flex items-start justify-between gap-2.5 cursor-pointer transition-colors ${
                           checked
                             ? sym.isRedFlag
                               ? 'bg-red-50 border-red-400 text-red-950'
@@ -1920,28 +2018,53 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                             : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'
                         }`}
                       >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setSelectedSymptoms([...selectedSymptoms, sym.id]);
-                            } else {
-                              setSelectedSymptoms(
-                                selectedSymptoms.filter((id) => id !== sym.id)
-                              );
-                            }
-                          }}
-                          className="mt-0.5 w-4 h-4 rounded border-slate-300"
-                        />
-                        <div>
-                          <span>{language === 'hi' ? sym.labelHi : sym.labelEn}</span>
-                          {sym.isRedFlag && (
-                            <span className="block text-[11px] font-semibold text-red-700">
-                              Urgent Danger Sign
-                            </span>
-                          )}
+                        <div className="flex items-start gap-2.5">
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setSelectedSymptoms([...selectedSymptoms, sym.id]);
+                              } else {
+                                setSelectedSymptoms(
+                                  selectedSymptoms.filter((id) => id !== sym.id)
+                                );
+                              }
+                            }}
+                            className="mt-0.5 w-4 h-4 rounded border-slate-300"
+                          />
+                          <div>
+                            <span>{language === 'hi' ? sym.labelHi : sym.labelEn}</span>
+                            {sym.isRedFlag && (
+                              <span className="block text-[11px] font-semibold text-red-700">
+                                Urgent Danger Sign
+                              </span>
+                            )}
+                            {isCustom && !sym.isRedFlag && (
+                              <span className="block text-[11px] font-medium text-teal-700">
+                                Custom Added Symptom
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        {isCustom && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setCustomSymptomsList((prev) =>
+                                prev.filter((item) => item.id !== sym.id)
+                              );
+                              setSelectedSymptoms((prev) =>
+                                prev.filter((id) => id !== sym.id)
+                              );
+                            }}
+                            title="Remove custom symptom"
+                            className="text-slate-400 hover:text-red-600 p-0.5"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                       </label>
                     );
                   })}
@@ -1976,152 +2099,409 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                 </div>
               </div>
 
-              {/* MoHFW CBAC (Community Based Assessment Checklist) NCD Risk Scoring (0-10) */}
-              <div className="pt-4 border-t border-slate-100 space-y-3">
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                  <div>
-                    <h3 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
-                      <Activity className="w-4 h-4 text-teal-700" />
-                      <span>
+              {/* MoHFW CBAC (Community Based Assessment Checklist) NCD Risk Scoring (0-10) — Redesigned Touch UI/UX */}
+              <div className="pt-5 border-t border-slate-100 space-y-4">
+                <div className="p-4 rounded-xl bg-slate-50 border border-slate-200 space-y-3">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <Activity className="w-4 h-4 text-teal-700 shrink-0" />
+                        <h3 className="text-sm font-bold text-slate-900">
+                          {language === 'hi'
+                            ? 'MoHFW CBAC एनसीडी जोखिम तालिका (CBAC NCD Risk Checklist)'
+                            : 'MoHFW CBAC NCD Risk Checklist (0–10 Scale)'}
+                        </h3>
+                      </div>
+                      <p className="text-xs text-slate-600">
                         {language === 'hi'
-                          ? 'MoHFW CBAC एनसीडी जोखिम मूल्यांकन (CBAC NCD Risk Checklist · 0–10)'
-                          : 'MoHFW CBAC NCD Risk Checklist (Score 0–10)'}
-                      </span>
-                    </h3>
-                    <p className="text-xs text-slate-500">
-                      {language === 'hi'
-                        ? 'स्कोर > 4 होने पर मरीज को साप्ताहिक पीएचसी एनसीडी क्लिनिक जांच के लिए चिह्नित किया जाता है।'
-                        : 'A total CBAC score > 4 flags the beneficiary for weekly PHC NCD screening (BP, Diabetes & Cancer prevention).'}
-                    </p>
+                          ? 'प्रत्येक प्रश्न के लिए उपयुक्त विकल्प पर टैप करें। कुल स्कोर > 4 होने पर साप्ताहिक पीएचसी एनसीडी जांच आवश्यक है।'
+                          : 'Tap an option for each of the 6 community risk factors below. A score > 4 triggers priority PHC NCD screening.'}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-start sm:self-center shrink-0">
+                      <div
+                        className={`px-3 py-1.5 rounded-lg border text-xs font-mono font-bold tabular-nums flex items-center gap-2 ${
+                          liveCbac.isHighNcdRisk
+                            ? 'bg-amber-100 border-amber-400 text-amber-950'
+                            : 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                        }`}
+                      >
+                        <span>Score: {liveCbac.totalScore}/10</span>
+                        <span className="text-[11px] font-sans font-semibold px-1.5 py-0.5 rounded bg-white/80">
+                          {liveCbac.isHighNcdRisk
+                            ? language === 'hi'
+                              ? 'उच्च जोखिम (>4)'
+                              : 'High Risk (>4)'
+                            : language === 'hi'
+                              ? 'सामान्य (≤4)'
+                              : 'Routine (≤4)'}
+                        </span>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setCbacInput({
+                            ageScore: 0,
+                            tobaccoScore: 0,
+                            alcoholScore: 0,
+                            waistScore: 0,
+                            physicalActivityScore: 0,
+                            familyHistoryScore: 0,
+                          })
+                        }
+                        title="Reset CBAC Checklist"
+                        className="min-h-[36px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-700 hover:bg-slate-100 text-xs font-semibold flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5" />
+                        <span>{language === 'hi' ? 'रीसेट' : 'Reset'}</span>
+                      </button>
+                    </div>
                   </div>
-                  <span
-                    className={`text-xs font-mono font-bold tabular-nums px-2.5 py-1 rounded-md border self-start sm:self-center ${
-                      liveCbac.isHighNcdRisk
-                        ? 'bg-amber-50 border-amber-300 text-amber-900'
-                        : 'bg-slate-50 border-slate-200 text-slate-700'
-                    }`}
-                  >
-                    CBAC Score: {liveCbac.totalScore}/10{' '}
-                    {liveCbac.isHighNcdRisk ? '(High Risk > 4)' : '(Routine ≤ 4)'}
-                  </span>
+
+                  {/* 10-Segment Visual Score Bar */}
+                  <div className="space-y-1">
+                    <div className="grid grid-cols-10 gap-1">
+                      {Array.from({ length: 10 }).map((_, idx) => {
+                        const pointNum = idx + 1;
+                        const active = pointNum <= liveCbac.totalScore;
+                        const isHighZone = pointNum > 4;
+                        return (
+                          <div
+                            key={pointNum}
+                            className={`h-2 rounded-sm transition-colors ${
+                              active
+                                ? isHighZone
+                                  ? 'bg-amber-500'
+                                  : 'bg-teal-600'
+                                : 'bg-slate-200'
+                            }`}
+                          />
+                        );
+                      })}
+                    </div>
+                    <div className="flex justify-between text-[11px] text-slate-500 font-mono">
+                      <span>0 pts (Low Risk)</span>
+                      <span>Threshold: &gt;4 pts (PHC NCD Referral)</span>
+                      <span>10 pts (Max)</span>
+                    </div>
+                  </div>
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      1. Age Group (आयु वर्ग)
-                    </label>
-                    <select
-                      value={cbacInput.ageScore}
-                      onChange={(e) =>
-                        setCbacInput((prev) => ({
-                          ...prev,
-                          ageScore: Number(e.target.value) as 0 | 1 | 2,
-                        }))
-                      }
-                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
-                    >
-                      <option value={0}>Under 30 years (0 pts)</option>
-                      <option value={1}>30–49 years (1 pt)</option>
-                      <option value={2}>50 years or older (2 pts)</option>
-                    </select>
+                {/* 6 Interactive Touch Cards for CBAC Questions */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5 text-xs">
+                  {/* Question 1: Age Group */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">
+                        1. {language === 'hi' ? 'आयु वर्ग (Age Group)' : 'Age Group'}
+                      </span>
+                      <span className="font-mono font-semibold text-teal-800">
+                        +{cbacInput.ageScore} pt{cbacInput.ageScore === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        { val: 0 as const, labelEn: '< 30 yrs', labelHi: '< 30 वर्ष', pts: '0 pt' },
+                        { val: 1 as const, labelEn: '30–49 yrs', labelHi: '30–49 वर्ष', pts: '+1 pt' },
+                        { val: 2 as const, labelEn: '≥ 50 yrs', labelHi: '≥ 50 वर्ष', pts: '+2 pts' },
+                      ].map((opt) => {
+                        const active = cbacInput.ageScore === opt.val;
+                        return (
+                          <button
+                            key={opt.val}
+                            type="button"
+                            onClick={() =>
+                              setCbacInput((prev) => ({ ...prev, ageScore: opt.val }))
+                            }
+                            className={`min-h-[44px] px-2 py-1.5 rounded-lg border text-center transition-colors flex flex-col items-center justify-center ${
+                              active
+                                ? 'bg-teal-700 text-white border-teal-700 font-semibold'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span>{language === 'hi' ? opt.labelHi : opt.labelEn}</span>
+                            <span
+                              className={`text-[10px] font-mono ${
+                                active ? 'text-teal-100' : 'text-slate-500'
+                              }`}
+                            >
+                              {opt.pts}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      2. Smoke / Smokeless Tobacco (तंबाकू)
-                    </label>
-                    <select
-                      value={cbacInput.tobaccoScore}
-                      onChange={(e) =>
-                        setCbacInput((prev) => ({
-                          ...prev,
-                          tobaccoScore: Number(e.target.value) as 0 | 1 | 2,
-                        }))
-                      }
-                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
-                    >
-                      <option value={0}>Never used (0 pts)</option>
-                      <option value={1}>Past or occasional user (1 pt)</option>
-                      <option value={2}>Daily tobacco / gutkha user (2 pts)</option>
-                    </select>
+                  {/* Question 2: Smoke / Smokeless Tobacco */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">
+                        2. {language === 'hi' ? 'तंबाकू / गुटखा (Tobacco Use)' : 'Tobacco / Gutkha Use'}
+                      </span>
+                      <span className="font-mono font-semibold text-teal-800">
+                        +{cbacInput.tobaccoScore} pt{cbacInput.tobaccoScore === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        { val: 0 as const, labelEn: 'Never', labelHi: 'कभी नहीं', pts: '0 pt' },
+                        { val: 1 as const, labelEn: 'Past / Rare', labelHi: 'कभी-कभार', pts: '+1 pt' },
+                        { val: 2 as const, labelEn: 'Daily User', labelHi: 'प्रतिदिन', pts: '+2 pts' },
+                      ].map((opt) => {
+                        const active = cbacInput.tobaccoScore === opt.val;
+                        return (
+                          <button
+                            key={opt.val}
+                            type="button"
+                            onClick={() =>
+                              setCbacInput((prev) => ({ ...prev, tobaccoScore: opt.val }))
+                            }
+                            className={`min-h-[44px] px-2 py-1.5 rounded-lg border text-center transition-colors flex flex-col items-center justify-center ${
+                              active
+                                ? 'bg-teal-700 text-white border-teal-700 font-semibold'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span>{language === 'hi' ? opt.labelHi : opt.labelEn}</span>
+                            <span
+                              className={`text-[10px] font-mono ${
+                                active ? 'text-teal-100' : 'text-slate-500'
+                              }`}
+                            >
+                              {opt.pts}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      3. Daily Alcohol Consumption (शराब)
-                    </label>
-                    <select
-                      value={cbacInput.alcoholScore}
-                      onChange={(e) =>
-                        setCbacInput((prev) => ({
-                          ...prev,
-                          alcoholScore: Number(e.target.value) as 0 | 1,
-                        }))
-                      }
-                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
-                    >
-                      <option value={0}>No (0 pts)</option>
-                      <option value={1}>Yes — frequent/daily (1 pt)</option>
-                    </select>
+                  {/* Question 3: Alcohol Consumption */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">
+                        3. {language === 'hi' ? 'शराब का सेवन (Daily Alcohol)' : 'Daily Alcohol Intake'}
+                      </span>
+                      <span className="font-mono font-semibold text-teal-800">
+                        +{cbacInput.alcoholScore} pt{cbacInput.alcoholScore === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { val: 0 as const, labelEn: 'No', labelHi: 'नहीं (No)', pts: '0 pt' },
+                        {
+                          val: 1 as const,
+                          labelEn: 'Yes (Daily / Frequent)',
+                          labelHi: 'हां (प्रतिदिन)',
+                          pts: '+1 pt',
+                        },
+                      ].map((opt) => {
+                        const active = cbacInput.alcoholScore === opt.val;
+                        return (
+                          <button
+                            key={opt.val}
+                            type="button"
+                            onClick={() =>
+                              setCbacInput((prev) => ({ ...prev, alcoholScore: opt.val }))
+                            }
+                            className={`min-h-[44px] px-2.5 py-1.5 rounded-lg border text-center transition-colors flex flex-col items-center justify-center ${
+                              active
+                                ? 'bg-teal-700 text-white border-teal-700 font-semibold'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span>{language === 'hi' ? opt.labelHi : opt.labelEn}</span>
+                            <span
+                              className={`text-[10px] font-mono ${
+                                active ? 'text-teal-100' : 'text-slate-500'
+                              }`}
+                            >
+                              {opt.pts}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      4. Waist Circumference (कमर का घेरा)
-                    </label>
-                    <select
-                      value={cbacInput.waistScore}
-                      onChange={(e) =>
-                        setCbacInput((prev) => ({
-                          ...prev,
-                          waistScore: Number(e.target.value) as 0 | 1 | 2,
-                        }))
-                      }
-                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
-                    >
-                      <option value={0}>Normal (&lt;80cm F / &lt;90cm M) (0 pts)</option>
-                      <option value={1}>Elevated (80–90cm F / 90–100cm M) (1 pt)</option>
-                      <option value={2}>High (&gt;90cm F / &gt;100cm M) (2 pts)</option>
-                    </select>
+                  {/* Question 4: Waist Circumference */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">
+                        4. {language === 'hi' ? 'कमर का घेरा (Waist Size)' : 'Waist Circumference'}
+                      </span>
+                      <span className="font-mono font-semibold text-teal-800">
+                        +{cbacInput.waistScore} pt{cbacInput.waistScore === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-3 gap-1.5">
+                      {[
+                        {
+                          val: 0 as const,
+                          labelEn: 'Normal (<80F/90M)',
+                          labelHi: 'सामान्य',
+                          pts: '0 pt',
+                        },
+                        {
+                          val: 1 as const,
+                          labelEn: 'High (80–90F/90–100M)',
+                          labelHi: 'मध्यम वृद्धि',
+                          pts: '+1 pt',
+                        },
+                        {
+                          val: 2 as const,
+                          labelEn: 'Very High (>90F/>100M)',
+                          labelHi: 'अधिक (>90/100)',
+                          pts: '+2 pts',
+                        },
+                      ].map((opt) => {
+                        const active = cbacInput.waistScore === opt.val;
+                        return (
+                          <button
+                            key={opt.val}
+                            type="button"
+                            onClick={() =>
+                              setCbacInput((prev) => ({ ...prev, waistScore: opt.val }))
+                            }
+                            className={`min-h-[44px] px-2 py-1.5 rounded-lg border text-center transition-colors flex flex-col items-center justify-center ${
+                              active
+                                ? 'bg-teal-700 text-white border-teal-700 font-semibold'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span className="leading-tight">
+                              {language === 'hi' ? opt.labelHi : opt.labelEn}
+                            </span>
+                            <span
+                              className={`text-[10px] font-mono ${
+                                active ? 'text-teal-100' : 'text-slate-500'
+                              }`}
+                            >
+                              {opt.pts}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      5. Physical Activity (शारीरिक गतिविधि)
-                    </label>
-                    <select
-                      value={cbacInput.physicalActivityScore}
-                      onChange={(e) =>
-                        setCbacInput((prev) => ({
-                          ...prev,
-                          physicalActivityScore: Number(e.target.value) as 0 | 1,
-                        }))
-                      }
-                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
-                    >
-                      <option value={0}>Active (≥150 mins/week) (0 pts)</option>
-                      <option value={1}>Sedentary (&lt;150 mins/week) (1 pt)</option>
-                    </select>
+                  {/* Question 5: Physical Activity */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">
+                        5. {language === 'hi' ? 'शारीरिक गतिविधि (Physical Activity)' : 'Physical Activity'}
+                      </span>
+                      <span className="font-mono font-semibold text-teal-800">
+                        +{cbacInput.physicalActivityScore} pt
+                        {cbacInput.physicalActivityScore === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        {
+                          val: 0 as const,
+                          labelEn: 'Active (≥150 min/wk)',
+                          labelHi: 'सक्रिय (≥150 मिनट/सप्ताह)',
+                          pts: '0 pt',
+                        },
+                        {
+                          val: 1 as const,
+                          labelEn: 'Low (<150 min/wk)',
+                          labelHi: 'कम (<150 मिनट/सप्ताह)',
+                          pts: '+1 pt',
+                        },
+                      ].map((opt) => {
+                        const active = cbacInput.physicalActivityScore === opt.val;
+                        return (
+                          <button
+                            key={opt.val}
+                            type="button"
+                            onClick={() =>
+                              setCbacInput((prev) => ({
+                                ...prev,
+                                physicalActivityScore: opt.val,
+                              }))
+                            }
+                            className={`min-h-[44px] px-2.5 py-1.5 rounded-lg border text-center transition-colors flex flex-col items-center justify-center ${
+                              active
+                                ? 'bg-teal-700 text-white border-teal-700 font-semibold'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span>{language === 'hi' ? opt.labelHi : opt.labelEn}</span>
+                            <span
+                              className={`text-[10px] font-mono ${
+                                active ? 'text-teal-100' : 'text-slate-500'
+                              }`}
+                            >
+                              {opt.pts}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
 
-                  <div>
-                    <label className="block font-semibold text-slate-700 mb-1">
-                      6. Family History BP/Sugar/Heart (पारिवारिक इतिहास)
-                    </label>
-                    <select
-                      value={cbacInput.familyHistoryScore}
-                      onChange={(e) =>
-                        setCbacInput((prev) => ({
-                          ...prev,
-                          familyHistoryScore: Number(e.target.value) as 0 | 2,
-                        }))
-                      }
-                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
-                    >
-                      <option value={0}>No family history (0 pts)</option>
-                      <option value={2}>Yes — parents/siblings with BP/DM (2 pts)</option>
-                    </select>
+                  {/* Question 6: Family History */}
+                  <div className="p-3.5 rounded-xl border border-slate-200 bg-white space-y-2.5">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-900">
+                        6.{' '}
+                        {language === 'hi'
+                          ? 'पारिवारिक इतिहास: बीपी/शुगर/हृदय (Family History)'
+                          : 'Family History (BP / Diabetes / Heart)'}
+                      </span>
+                      <span className="font-mono font-semibold text-teal-800">
+                        +{cbacInput.familyHistoryScore} pts
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        {
+                          val: 0 as const,
+                          labelEn: 'No Family History',
+                          labelHi: 'नहीं (No)',
+                          pts: '0 pt',
+                        },
+                        {
+                          val: 2 as const,
+                          labelEn: 'Yes (Parents / Siblings)',
+                          labelHi: 'हां (माता-पिता / भाई-बहन)',
+                          pts: '+2 pts',
+                        },
+                      ].map((opt) => {
+                        const active = cbacInput.familyHistoryScore === opt.val;
+                        return (
+                          <button
+                            key={opt.val}
+                            type="button"
+                            onClick={() =>
+                              setCbacInput((prev) => ({
+                                ...prev,
+                                familyHistoryScore: opt.val,
+                              }))
+                            }
+                            className={`min-h-[44px] px-2.5 py-1.5 rounded-lg border text-center transition-colors flex flex-col items-center justify-center ${
+                              active
+                                ? 'bg-teal-700 text-white border-teal-700 font-semibold'
+                                : 'bg-slate-50 text-slate-700 border-slate-200 hover:bg-slate-100'
+                            }`}
+                          >
+                            <span>{language === 'hi' ? opt.labelHi : opt.labelEn}</span>
+                            <span
+                              className={`text-[10px] font-mono ${
+                                active ? 'text-teal-100' : 'text-slate-500'
+                              }`}
+                            >
+                              {opt.pts}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -2491,49 +2871,6 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
               </div>
             </section>
           </form>
-
-          {/* Clearly Labelled Collapsible Demo Mode Panel (kept out of the main screening interface) */}
-          <details className="bg-slate-100 rounded-xl border border-slate-200 p-4 text-xs text-slate-700">
-            <summary className="font-semibold cursor-pointer flex items-center gap-2 select-none">
-              <FlaskConical className="w-4 h-4 text-teal-700" />
-              <span>Demo Mode Panel — Load Sample Screening Scenarios for Testing</span>
-            </summary>
-            <div className="pt-3 mt-3 border-t border-slate-200 space-y-2">
-              <p className="text-slate-600">
-                Use these presets during evaluation to quickly populate sample measurements for each screening category:
-              </p>
-              <div className="flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={() => applyClinicalPreset('urgent_htn')}
-                  className="min-h-[38px] px-3 py-1.5 rounded-lg bg-white border border-slate-300 font-medium text-slate-800 hover:bg-slate-50"
-                >
-                  Urgent Medical Assessment (BP 188/116 + SpO2 90%)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applyClinicalPreset('maternal_risk')}
-                  className="min-h-[38px] px-3 py-1.5 rounded-lg bg-white border border-slate-300 font-medium text-slate-800 hover:bg-slate-50"
-                >
-                  Maternal Danger Sign (Pregnant + BP 146/95)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applyClinicalPreset('incomplete_vitals')}
-                  className="min-h-[38px] px-3 py-1.5 rounded-lg bg-white border border-slate-300 font-medium text-slate-800 hover:bg-slate-50"
-                >
-                  Information Incomplete (Missing SpO2 & Temp)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => applyClinicalPreset('routine_normal')}
-                  className="min-h-[38px] px-3 py-1.5 rounded-lg bg-white border border-slate-300 font-medium text-slate-800 hover:bg-slate-50"
-                >
-                  Routine Follow-up (Normal Vitals)
-                </button>
-              </div>
-            </div>
-          </details>
         </div>
       )}
 

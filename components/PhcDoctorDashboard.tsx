@@ -13,16 +13,6 @@ import {
   Stethoscope,
 } from 'lucide-react';
 import {
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
-import {
   DashboardMetrics,
   LanguageCode,
   ReferralRecord,
@@ -542,88 +532,119 @@ export const PhcDoctorDashboard: React.FC<PhcDoctorDashboardProps> = ({
         </summary>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pt-5 mt-4 border-t border-slate-100">
-          <div className="space-y-2">
+          <div className="space-y-3">
             <h4 className="text-xs font-bold text-slate-700">Screenings by Category</h4>
-            <div className="h-52 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={metrics.screeningsByCategory}
-                  layout="vertical"
-                  margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis type="number" allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <YAxis
-                    dataKey="label"
-                    type="category"
-                    width={120}
-                    tick={{ fontSize: 10, fill: '#334155' }}
-                  />
-                  <Tooltip />
-                  <Bar dataKey="count" radius={[0, 4, 4, 0]}>
-                    {metrics.screeningsByCategory.map((entry) => (
-                      <Cell
-                        key={entry.category}
-                        fill={CATEGORY_COLORS[entry.category] || '#0f766e'}
+            <div className="space-y-2.5">
+              {metrics.screeningsByCategory.map((entry) => {
+                const maxCount = Math.max(
+                  1,
+                  ...metrics.screeningsByCategory.map((item) => item.count)
+                );
+                const widthPct = Math.round((entry.count / maxCount) * 100);
+                const barColor = CATEGORY_COLORS[entry.category] || '#0f766e';
+                return (
+                  <div key={entry.category} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-slate-700 truncate pr-2">
+                        {entry.label}
+                      </span>
+                      <span className="font-mono font-bold text-slate-900 tabular-nums">
+                        {entry.count}
+                      </span>
+                    </div>
+                    <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full transition-all duration-300"
+                        style={{
+                          width: `${entry.count > 0 ? Math.max(widthPct, 6) : 0}%`,
+                          backgroundColor: barColor,
+                        }}
                       />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             <h4 className="text-xs font-bold text-slate-700">Referrals by Status</h4>
-            <div className="h-52 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={metrics.referralsByStatus}
-                  margin={{ top: 10, right: 15, left: 0, bottom: 20 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis
-                    dataKey="status"
-                    tick={{ fontSize: 10, fill: '#334155' }}
-                    interval={0}
-                    angle={-15}
-                    textAnchor="end"
-                  />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar dataKey="count" fill="#0f766e" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
+            <div className="space-y-2.5">
+              {metrics.referralsByStatus.map((entry) => {
+                const maxCount = Math.max(
+                  1,
+                  ...metrics.referralsByStatus.map((item) => item.count)
+                );
+                const widthPct = Math.round((entry.count / maxCount) * 100);
+                return (
+                  <div key={entry.status} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-medium text-slate-700 capitalize">
+                        {entry.status.replace(/_/g, ' ')}
+                      </span>
+                      <span className="font-mono font-bold text-slate-900 tabular-nums">
+                        {entry.count}
+                      </span>
+                    </div>
+                    <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-teal-700 transition-all duration-300"
+                        style={{
+                          width: `${entry.count > 0 ? Math.max(widthPct, 6) : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             <h4 className="text-xs font-bold text-slate-700">Screenings by Village</h4>
-            <div className="h-52 w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={metrics.screeningsByVillage}
-                  margin={{ top: 10, right: 15, left: 0, bottom: 5 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-                  <XAxis dataKey="village" tick={{ fontSize: 11, fill: '#334155' }} />
-                  <YAxis allowDecimals={false} tick={{ fontSize: 11 }} />
-                  <Tooltip />
-                  <Bar
-                    dataKey="screenings"
-                    name="Total Screenings"
-                    fill="#0f766e"
-                    radius={[4, 4, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="urgentCount"
-                    name="Urgent Cases"
-                    fill="#dc2626"
-                    radius={[4, 4, 0, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+            {metrics.screeningsByVillage.length === 0 ? (
+              <p className="text-xs text-slate-500 py-6 text-center bg-slate-50 rounded-lg border border-slate-100">
+                No village screenings recorded yet.
+              </p>
+            ) : (
+              <div className="space-y-2.5">
+                {metrics.screeningsByVillage.map((entry) => {
+                  const maxCount = Math.max(
+                    1,
+                    ...metrics.screeningsByVillage.map((item) => item.screenings)
+                  );
+                  const totalPct = Math.round((entry.screenings / maxCount) * 100);
+                  const urgentPct = Math.round((entry.urgentCount / maxCount) * 100);
+                  return (
+                    <div key={entry.village} className="space-y-1">
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="font-medium text-slate-700">{entry.village}</span>
+                        <span className="font-mono text-[11px] text-slate-600 tabular-nums">
+                          {entry.screenings} total ·{' '}
+                          <span className="text-red-700 font-bold">
+                            {entry.urgentCount} urgent
+                          </span>
+                        </span>
+                      </div>
+                      <div className="h-2.5 w-full rounded-full bg-slate-100 overflow-hidden flex">
+                        <div
+                          className="h-full bg-teal-700 transition-all duration-300"
+                          style={{
+                            width: `${entry.screenings > 0 ? Math.max(totalPct - urgentPct, 4) : 0}%`,
+                          }}
+                        />
+                        {entry.urgentCount > 0 && (
+                          <div
+                            className="h-full bg-red-600 transition-all duration-300"
+                            style={{ width: `${Math.max(urgentPct, 6)}%` }}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       </details>

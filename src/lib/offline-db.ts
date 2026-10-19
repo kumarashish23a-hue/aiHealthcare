@@ -53,7 +53,7 @@ export class SwasthyaSetuOfflineDB extends Dexie {
   drafts!: Table<ScreeningDraft, string>;
 
   constructor() {
-    super('SwasthyaSetuOfflineDB_v2');
+    super('SwasthyaSetuOfflineDB_v3');
     this.version(1).stores({
       patients: 'patientId, village, syncStatus, createdAt',
       screenings: 'screeningId, patientId, resultCategory, syncStatus, screeningDate',

@@ -1,4 +1,4 @@
-import { desc, eq } from 'drizzle-orm';
+import { desc, eq, inArray } from 'drizzle-orm';
 import { db, isSqlConfigured } from './index.ts';
 import {
   auditLogs,
@@ -37,6 +37,30 @@ import {
 } from '../lib/workflow-logic.ts';
 
 let isSeedingComplete = false;
+
+const LEGACY_PRESET_PATIENT_IDS = [
+  'PAT-RMP-1001',
+  'PAT-RMP-1002',
+  'PAT-RMP-1003',
+  'PAT-RMP-1004',
+  'PAT-RMP-1005',
+  'PAT-RMP-1006',
+];
+const LEGACY_PRESET_SCREENING_IDS = [
+  'SCR-2026-8801',
+  'SCR-2026-8802',
+  'SCR-2026-8803',
+  'SCR-2026-8804',
+  'SCR-2026-8805',
+];
+const LEGACY_PRESET_REFERRAL_IDS = ['REF-PHC-5001', 'REF-PHC-5002', 'REF-PHC-5003'];
+const LEGACY_PRESET_FOLLOWUP_IDS = [
+  'FUP-2026-3001',
+  'FUP-2026-3002',
+  'FUP-2026-3003',
+  'FUP-2026-3004',
+];
+const LEGACY_PRESET_AUDIT_IDS = ['AUD-101', 'AUD-102', 'AUD-103', 'AUD-104'];
 
 // Robust in-memory store for local execution, tests, and offline resilience
 const memoryStore = {
@@ -145,11 +169,12 @@ export async function ensureSyntheticDemoSeeded(): Promise<void> {
   }
 
   try {
-    const existingPatients = await db.select().from(patients);
-    if (existingPatients.length > 0) {
-      isSeedingComplete = true;
-      return;
-    }
+    // Purge any legacy pre-set synthetic rows so workspace starts clean
+    await db.delete(followUpRecords).where(inArray(followUpRecords.followUpId, LEGACY_PRESET_FOLLOWUP_IDS));
+    await db.delete(referrals).where(inArray(referrals.referralId, LEGACY_PRESET_REFERRAL_IDS));
+    await db.delete(screeningRecords).where(inArray(screeningRecords.screeningId, LEGACY_PRESET_SCREENING_IDS));
+    await db.delete(patients).where(inArray(patients.patientId, LEGACY_PRESET_PATIENT_IDS));
+    await db.delete(auditLogs).where(inArray(auditLogs.auditId, LEGACY_PRESET_AUDIT_IDS));
 
     // 1. Seed Demo Users
     for (const key of ['health_worker', 'doctor'] as const) {

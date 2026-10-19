@@ -68,6 +68,54 @@ export const SYMPTOM_CATALOG: {
   },
 ];
 
+export const VILLAGE_CATALOG: string[] = [
+  'Rampur',
+  'Khairabad',
+  'Chandpur',
+  'Maholi',
+  'Biswan',
+  'Sidhauli',
+  'Laharpur',
+  'Misrikh',
+  'Mahmudabad',
+  'Hargaon',
+  'Kamlapur',
+  'Pisawan',
+  'Machhrehta',
+  'Gondlamau',
+  'Sakran',
+  'Paharpur',
+];
+
+export function formatSymptomLabel(
+  symId: string,
+  lang: LanguageCode = 'en'
+): { label: string; isRedFlag: boolean } {
+  const catalogItem = SYMPTOM_CATALOG.find((s) => s.id === symId);
+  if (catalogItem) {
+    return {
+      label: lang === 'hi' ? catalogItem.labelHi : catalogItem.labelEn,
+      isRedFlag: catalogItem.isRedFlag,
+    };
+  }
+  if (symId.startsWith('urgent:')) {
+    return {
+      label: symId.replace(/^urgent:/, '').trim(),
+      isRedFlag: true,
+    };
+  }
+  if (symId.startsWith('custom:')) {
+    return {
+      label: symId.replace(/^custom:/, '').trim(),
+      isRedFlag: false,
+    };
+  }
+  return {
+    label: symId,
+    isRedFlag: false,
+  };
+}
+
 export const KNOWN_CONDITIONS_CATALOG: { id: string; labelEn: string; labelHi: string }[] = [
   { id: 'Hypertension', labelEn: 'Known Hypertension (High BP)', labelHi: 'उच्च रक्तचाप (हाई बीपी)' },
   { id: 'Diabetes', labelEn: 'Known Diabetes Mellitus', labelHi: 'मधुमेह (शुगर)' },
