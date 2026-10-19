@@ -169,12 +169,7 @@ export const SwasthyaSetuApp: React.FC = () => {
     };
   }, []);
 
-  // Strict Role Guard: ASHA health worker cannot see or access the doctor/PHC panel
-  useEffect(() => {
-    if (activeRole === 'health_worker' && mainSection === 'phc') {
-      setMainSection('worker');
-    }
-  }, [activeRole, mainSection]);
+  // Strict Role Guard is handled in role-switch handlers and view render guard
 
   // Load workspace data from Cloud SQL API or IndexedDB
   const fetchWorkspaceFromServer = useCallback(async () => {
