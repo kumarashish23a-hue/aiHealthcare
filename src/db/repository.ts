@@ -1,3 +1,5 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { desc, eq, inArray } from 'drizzle-orm';
 import { db, isSqlConfigured } from './index.ts';
 import {
@@ -36,6 +38,7 @@ import {
   calculateDashboardMetrics,
   detectVersionConflict,
 } from '../lib/workflow-logic.ts';
+import { PROTOTYPE_ENGINE_VERSION } from '../lib/screening-engine.ts';
 
 let isSeedingComplete = false;
 
@@ -123,6 +126,7 @@ export async function getOrCreateUser(
   };
 
   if (!isSqlConfigured) {
+    await ensureRestored();
     return getFromMemory();
   }
 
@@ -341,6 +345,7 @@ export async function ensureSyntheticDemoSeeded(): Promise<void> {
 }
 
 export async function getAllWorkspaceData(referenceDateIso?: string) {
+  await ensureRestored();
   const getFromMemory = () => ({
     patients: [...memoryStore.patients],
     screenings: [...memoryStore.screenings],
@@ -525,10 +530,12 @@ export async function upsertProfileRecord(payload: {
     lastUsedAt: payload.lastUsedAt,
   };
 
+  await ensureRestored();
   memoryStore.profiles = [
     ...memoryStore.profiles.filter((p) => p.uid !== clean.uid),
     clean,
   ].sort((a, b) => b.lastUsedAt.localeCompare(a.lastUsedAt));
+  schedulePersist();
 
   await recordAuditLog({
     actorUid: clean.uid,
@@ -542,6 +549,91 @@ export async function upsertProfileRecord(payload: {
   return clean;
 }
 
+/**
+ * Disk-backed snapshot for the in-memory store (prototype build without SQL):
+ * every mutation is written through to `.data/workspace-snapshot.json` so
+ * patients/screenings/referrals/follow-ups/profiles/audit logs SURVIVE server
+ * restarts and dev-server recompiles instead of being wiped on every reload.
+ */
+const SNAPSHOT_DIR = path.join(process.cwd(), '.data');
+const SNAPSHOT_PATH = path.join(SNAPSHOT_DIR, 'workspace-snapshot.json');
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let snapshotRestorePromise: Promise<void> | null = null;
+
+function schedulePersist(): void {
+  if (isSqlConfigured) return; // SQL (Cloud SQL) is the source of truth
+  if (persistTimer) clearTimeout(persistTimer);
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    void persistStoreSnapshot();
+  }, 400);
+}
+
+async function persistStoreSnapshot(): Promise<void> {
+  try {
+    await fs.mkdir(SNAPSHOT_DIR, { recursive: true });
+    await fs.writeFile(
+      SNAPSHOT_PATH,
+      JSON.stringify({
+        savedAt: new Date().toISOString(),
+        engineVersion: PROTOTYPE_ENGINE_VERSION,
+        patients: memoryStore.patients,
+        screenings: memoryStore.screenings,
+        referrals: memoryStore.referrals,
+        followUps: memoryStore.followUps,
+        auditLogs: memoryStore.auditLogs,
+        profiles: memoryStore.profiles,
+        users: [...memoryStore.users.values()],
+        syncEvents: memoryStore.syncEvents,
+      }),
+      'utf8'
+    );
+  } catch (error) {
+    console.warn('Failed to persist workspace snapshot to disk (continuing in-memory):', error);
+  }
+}
+
+async function restoreStoreSnapshot(): Promise<void> {
+  if (isSqlConfigured) return;
+  try {
+    const raw = await fs.readFile(SNAPSHOT_PATH, 'utf8');
+    const snapshot = JSON.parse(raw) as Partial<{
+      patients: PatientRecord[];
+      screenings: ScreeningRecord[];
+      referrals: ReferralRecord[];
+      followUps: FollowUpRecord[];
+      auditLogs: AuditLogEntry[];
+      profiles: StoredProfile[];
+      users: AppUser[];
+      syncEvents: typeof memoryStore.syncEvents;
+    }>;
+    if (Array.isArray(snapshot.patients) && snapshot.patients.length > 0) {
+      memoryStore.patients = snapshot.patients;
+    }
+    if (Array.isArray(snapshot.screenings)) memoryStore.screenings = snapshot.screenings;
+    if (Array.isArray(snapshot.referrals)) memoryStore.referrals = snapshot.referrals;
+    if (Array.isArray(snapshot.followUps)) memoryStore.followUps = snapshot.followUps;
+    if (Array.isArray(snapshot.auditLogs)) memoryStore.auditLogs = snapshot.auditLogs;
+    if (Array.isArray(snapshot.profiles)) memoryStore.profiles = snapshot.profiles;
+    if (Array.isArray(snapshot.users)) {
+      for (const u of snapshot.users) {
+        if (u && u.uid) memoryStore.users.set(u.uid, u);
+      }
+    }
+    if (Array.isArray(snapshot.syncEvents)) memoryStore.syncEvents = snapshot.syncEvents;
+  } catch {
+    // Missing or unreadable snapshot — start clean (first run).
+  }
+}
+
+function ensureRestored(): Promise<void> {
+  if (!snapshotRestorePromise) {
+    snapshotRestorePromise = restoreStoreSnapshot();
+  }
+  return snapshotRestorePromise;
+}
+
 export async function recordAuditLog(params: {
   actorUid: string;
   actorRole: string;
@@ -550,6 +642,7 @@ export async function recordAuditLog(params: {
   targetId: string;
   summary: string;
 }): Promise<void> {
+  await ensureRestored();
   const auditId = `AUD-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
   memoryStore.auditLogs.unshift({
     auditId,
@@ -561,6 +654,7 @@ export async function recordAuditLog(params: {
     summary: params.summary,
     createdAt: new Date().toISOString(),
   });
+  schedulePersist();
 
   if (!isSqlConfigured) return;
 
@@ -597,6 +691,7 @@ export async function createPatientRecord(
   assertAuthorized(actor.role, 'register_patient');
 
   const saveToMemory = async (): Promise<{ record: PatientRecord; duplicatePrevented: boolean }> => {
+    await ensureRestored();
     const existing = memoryStore.patients.find((p) => p.patientId === payload.patientId);
     if (existing) {
       return { duplicatePrevented: true, record: existing };
@@ -621,6 +716,7 @@ export async function createPatientRecord(
       syncStatus: 'synced',
     };
     memoryStore.patients.unshift(record);
+    schedulePersist();
 
     await recordAuditLog({
       actorUid: actor.uid,
@@ -757,6 +853,7 @@ export async function createScreeningAndFollowUp(
   assertAuthorized(actor.role, 'record_screening');
 
   const saveToMemory = async (): Promise<{ screeningId: string; duplicatePrevented: boolean }> => {
+    await ensureRestored();
     const existing = memoryStore.screenings.find((s) => s.screeningId === payload.screeningId);
     if (existing) {
       return { screeningId: existing.screeningId, duplicatePrevented: true };
@@ -815,6 +912,7 @@ export async function createScreeningAndFollowUp(
       };
       memoryStore.followUps.unshift(newFollowUp);
     }
+    schedulePersist();
 
     await recordAuditLog({
       actorUid: actor.uid,
@@ -929,6 +1027,7 @@ export async function createReferralRecord(
   assertAuthorized(actor.role, 'create_referral');
 
   const saveToMemory = async (): Promise<{ referralId: string; duplicatePrevented: boolean }> => {
+    await ensureRestored();
     const existingById = memoryStore.referrals.find((r) => r.referralId === payload.referralId);
     if (existingById) {
       return { referralId: existingById.referralId, duplicatePrevented: true };
@@ -957,6 +1056,7 @@ export async function createReferralRecord(
       isSimulated: true,
     };
     memoryStore.referrals.unshift(newReferral);
+    schedulePersist();
 
     await recordAuditLog({
       actorUid: actor.uid,
@@ -1058,6 +1158,7 @@ export async function updateReferralByDoctor(
   assertAuthorized(actor.role, 'review_referral');
 
   const updateInMemory = async () => {
+    await ensureRestored();
     const idx = memoryStore.referrals.findIndex((r) => r.referralId === payload.referralId);
     if (idx === -1) {
       throw new Error(`Referral ${payload.referralId} not found.`);
@@ -1097,6 +1198,7 @@ export async function updateReferralByDoctor(
       version: nextVersion,
     };
     memoryStore.referrals[idx] = updated;
+    schedulePersist();
 
     await recordAuditLog({
       actorUid: actor.uid,
@@ -1218,6 +1320,7 @@ export async function updateFollowUpRecord(
   assertAuthorized(actor.role, 'record_worker_followup');
 
   const updateInMemory = async () => {
+    await ensureRestored();
     const idx = memoryStore.followUps.findIndex((f) => f.followUpId === payload.followUpId);
     if (idx === -1) {
       throw new Error(`Follow-up record ${payload.followUpId} not found.`);
@@ -1254,6 +1357,7 @@ export async function updateFollowUpRecord(
       updatedAt: new Date().toISOString(),
     };
     memoryStore.followUps[idx] = updated;
+    schedulePersist();
 
     await recordAuditLog({
       actorUid: actor.uid,
@@ -1345,6 +1449,7 @@ export async function logSyncEventInDb(params: {
   deviceUid: string;
   conflictDetails?: string;
 }) {
+  await ensureRestored();
   memoryStore.syncEvents.push({
     syncEventId: params.syncEventId,
     entityType: params.entityType,
@@ -1355,6 +1460,7 @@ export async function logSyncEventInDb(params: {
     conflictDetails: params.conflictDetails || '',
     createdAt: new Date().toISOString(),
   });
+  schedulePersist();
 
   if (!isSqlConfigured) return;
 
