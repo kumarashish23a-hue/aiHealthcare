@@ -1,0 +1,6 @@
+{
+  "name": "SwasthyaSetu AI",
+  "description": "AI-assisted rural healthcare screening, referral, and follow-up platform for ASHA frontline workers and Primary Healthcare Centres.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
