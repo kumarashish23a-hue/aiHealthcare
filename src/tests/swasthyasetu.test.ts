@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   enforceSafetyGuardrailOnAiOutput,
+  evaluateCbacScore,
   evaluateScreening,
+  formatAbhaId,
   patientRegistrationSchema,
 } from '../lib/screening-engine';
 import {
@@ -9,6 +11,7 @@ import {
   calculateDashboardMetrics,
   detectDuplicateReferral,
   detectVersionConflict,
+  detectVillageSymptomClusters,
   isAuthorizedForAction,
 } from '../lib/workflow-logic';
 import { enqueueOfflineMutation, QueuedSyncMutation } from '../lib/offline-db';
@@ -481,6 +484,51 @@ describe('SwasthyaSetu AI — Comprehensive Clinical, Security & Offline Suite',
       expect(updatedMetrics.completedReferrals).toBe(1);
       expect(updatedMetrics.overdueFollowUps).toBe(0);
       expect(updatedMetrics.completedFollowUps).toBe(1);
+
+      // Step 7: Village cluster surveillance detects Rampur severe NCD alert
+      const clusters = detectVillageSymptomClusters(screenings, patients);
+      expect(clusters.length).toBeGreaterThanOrEqual(1);
+      expect(clusters[0].village).toBe('Rampur');
+    });
+
+    it('computes MoHFW CBAC NCD risk score (0-10), flags score > 4, and generates deterministic 14-digit ABHA ID', () => {
+      const abha1 = formatAbhaId('PAT-RMP-1001');
+      const abha2 = formatAbhaId('PAT-RMP-1001');
+      expect(abha1).toBe(abha2);
+      expect(abha1).toMatch(/^91-\d{4}-\d{4}-\d{4}$/);
+
+      const highCbac = evaluateCbacScore({
+        ageScore: 2,
+        tobaccoScore: 2,
+        alcoholScore: 0,
+        waistScore: 1,
+        physicalActivityScore: 1,
+        familyHistoryScore: 2,
+      });
+      expect(highCbac.totalScore).toBe(8);
+      expect(highCbac.isHighNcdRisk).toBe(true);
+
+      const screeningWithHighCbac = evaluateScreening({
+        patientId: 'PAT-RMP-1001',
+        systolicBp: 122,
+        diastolicBp: 78,
+        temperatureC: 36.8,
+        spo2Percent: 98,
+        symptoms: [],
+        symptomDurationDays: 0,
+        cbacInput: {
+          ageScore: 2,
+          tobaccoScore: 2,
+          alcoholScore: 0,
+          waistScore: 1,
+          physicalActivityScore: 0,
+          familyHistoryScore: 2,
+        },
+      });
+      expect(screeningWithHighCbac.resultCategory).toBe('further_assessment_needed');
+      expect(screeningWithHighCbac.flaggedReasons.some((r) => r.code === 'CBAC_NCD_HIGH_RISK')).toBe(
+        true
+      );
     });
   });
 });

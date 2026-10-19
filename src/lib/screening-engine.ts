@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import {
+  CbacEvaluation,
+  CbacInput,
   FlaggedReason,
   RecommendedStep,
   ScreeningCategory,
@@ -9,6 +11,55 @@ import {
 import { SYMPTOM_CATALOG, UI_LABELS } from './i18n';
 
 export const PROTOTYPE_ENGINE_VERSION = 'PROTOTYPE-RULES-v1.0';
+
+/**
+ * Generates a deterministic 14-digit ABHA-style Health Account ID (91-XXXX-XXXX-XXXX)
+ * from any patient identifier so offline and online devices display the exact same ID.
+ */
+export function formatAbhaId(patientId: string): string {
+  let hash = 2166136261;
+  const clean = (patientId || 'PAT-0000').trim().toUpperCase();
+  for (let i = 0; i < clean.length; i++) {
+    hash ^= clean.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  const positive = Math.abs(hash >>> 0);
+  const digits = String(positive).padStart(12, '4').slice(0, 12);
+  return `91-${digits.slice(0, 4)}-${digits.slice(4, 8)}-${digits.slice(8, 12)}`;
+}
+
+/**
+ * Evaluates the MoHFW Community Based Assessment Checklist (CBAC) 0–10 NCD Risk Score.
+ * A total score > 4 indicates elevated risk requiring priority NCD screening at the PHC.
+ */
+export function evaluateCbacScore(cbac?: CbacInput): CbacEvaluation {
+  if (!cbac) {
+    return {
+      totalScore: 0,
+      isHighNcdRisk: false,
+      riskLabelEn: 'Low NCD Risk (Score 0/10)',
+      riskLabelHi: 'कम एनसीडी जोखिम (स्कोर 0/10)',
+    };
+  }
+  const totalScore =
+    (cbac.ageScore || 0) +
+    (cbac.tobaccoScore || 0) +
+    (cbac.alcoholScore || 0) +
+    (cbac.waistScore || 0) +
+    (cbac.physicalActivityScore || 0) +
+    (cbac.familyHistoryScore || 0);
+  const isHighNcdRisk = totalScore > 4;
+  return {
+    totalScore,
+    isHighNcdRisk,
+    riskLabelEn: isHighNcdRisk
+      ? `High NCD Risk (CBAC Score ${totalScore}/10 > 4 — Refer to Weekly PHC NCD Day)`
+      : `Routine NCD Risk (CBAC Score ${totalScore}/10 ≤ 4)`,
+    riskLabelHi: isHighNcdRisk
+      ? `उच्च एनसीडी जोखिम (CBAC स्कोर ${totalScore}/10 > 4 — साप्ताहिक पीएचसी एनसीडी जांच आवश्यक)`
+      : `सामान्य एनसीडी जोखिम (CBAC स्कोर ${totalScore}/10 ≤ 4)`,
+  };
+}
 
 export const patientRegistrationSchema = z.object({
   patientId: z
@@ -486,6 +537,22 @@ export function evaluateScreening(input: ScreeningInput): ScreeningEvaluationRes
     });
   }
 
+  // 8b. Evaluate MoHFW CBAC NCD Risk Score (when provided)
+  const cbacEvaluation = input.cbacInput ? evaluateCbacScore(input.cbacInput) : undefined;
+  if (cbacEvaluation && cbacEvaluation.isHighNcdRisk) {
+    flaggedReasons.push({
+      code: 'CBAC_NCD_HIGH_RISK',
+      field: 'cbacScore',
+      severity: 'moderate',
+      titleEn: `Elevated CBAC NCD Risk Score (${cbacEvaluation.totalScore}/10)`,
+      titleHi: `उच्च CBAC एनसीडी जोखिम स्कोर (${cbacEvaluation.totalScore}/10)`,
+      explanationEn: `CBAC score of ${cbacEvaluation.totalScore}/10 exceeds threshold (>4). Beneficiary should attend the weekly PHC NCD screening clinic for hypertension, diabetes, and cancer prevention assessment.`,
+      explanationHi: `CBAC स्कोर ${cbacEvaluation.totalScore}/10 (>4) होने पर साप्ताहिक पीएचसी एनसीडी क्लिनिक में बीपी, शुगर और निवारक जांच आवश्यक है।`,
+      observedValue: `CBAC ${cbacEvaluation.totalScore}/10`,
+      referenceRule: 'Prototype CPHC-NCD CBAC Rule #CBAC-04',
+    });
+  }
+
   // Record missing fields explicitly as reasons so missing data is never hidden
   if (missingFields.length > 0) {
     flaggedReasons.push({
@@ -547,6 +614,7 @@ export function evaluateScreening(input: ScreeningInput): ScreeningEvaluationRes
     disclaimerEn: UI_LABELS.en.disclaimerBody,
     disclaimerHi: UI_LABELS.hi.disclaimerBody,
     engineVersion: PROTOTYPE_ENGINE_VERSION,
+    cbacEvaluation,
   };
 }
 

@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
@@ -9,6 +10,7 @@ import {
   Clock,
   FlaskConical,
   HeartPulse,
+  MapPin,
   Plus,
   Search,
   Send,
@@ -16,8 +18,11 @@ import {
   Sparkles,
   UserPlus,
   Users,
+  Volume2,
+  VolumeX,
 } from 'lucide-react';
 import {
+  CbacInput,
   FollowUpRecord,
   FollowUpStatus,
   LanguageCode,
@@ -35,7 +40,7 @@ import {
   SYMPTOM_CATALOG,
   UI_LABELS,
 } from '@/src/lib/i18n';
-import { evaluateScreening } from '@/src/lib/screening-engine';
+import { evaluateCbacScore, evaluateScreening, formatAbhaId } from '@/src/lib/screening-engine';
 import { offlineDb } from '@/src/lib/offline-db';
 
 interface HealthWorkerViewProps {
@@ -123,7 +128,7 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
   const [showRegistrationForm, setShowRegistrationForm] = useState(true);
 
   // --- Patient Registration Form State ---
-  const [regId, setRegId] = useState(() => `PAT-RMP-${Math.floor(1007 + Math.random() * 8900)}`);
+  const [regId, setRegId] = useState('PAT-RMP-1007');
   const [regName, setRegName] = useState('');
   const [regAge, setRegAge] = useState('32');
   const [regSex, setRegSex] = useState<'female' | 'male' | 'other'>('female');
@@ -178,6 +183,20 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
   const [editingFollowUpId, setEditingFollowUpId] = useState<string | null>(null);
   const [followUpNoteInput, setFollowUpNoteInput] = useState<string>('');
   const [followUpActionFeedback, setFollowUpActionFeedback] = useState<string | null>(null);
+  const [selectedVillageBeat, setSelectedVillageBeat] = useState<string>('all');
+
+  // --- MoHFW CBAC (Community Based Assessment Checklist) NCD Risk State ---
+  const [cbacInput, setCbacInput] = useState<CbacInput>({
+    ageScore: 1,
+    tobaccoScore: 0,
+    alcoholScore: 0,
+    waistScore: 0,
+    physicalActivityScore: 0,
+    familyHistoryScore: 0,
+  });
+
+  // --- Bilingual Voice Counseling State (Web Speech API) ---
+  const [isSpeaking, setIsSpeaking] = useState<boolean>(false);
 
   // --- Referrals Filter State ---
   const [referralStatusFilter, setReferralStatusFilter] = useState<string>('all');
@@ -306,6 +325,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     return Number.isNaN(num) ? NaN : num;
   };
 
+  const liveCbac = useMemo(() => evaluateCbacScore(cbacInput), [cbacInput]);
+
   // Live deterministic evaluation preview
   const liveEvaluation: ScreeningEvaluationResult = useMemo(() => {
     return evaluateScreening({
@@ -323,6 +344,7 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
       symptoms: selectedSymptoms,
       symptomDurationDays: Number(symptomDurationDays || 0),
       medicalHistoryNotes: historyNotes,
+      cbacInput,
     });
   }, [
     effectiveSelectedPatientId,
@@ -339,7 +361,42 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     selectedSymptoms,
     symptomDurationDays,
     historyNotes,
+    cbacInput,
   ]);
+
+  const handleToggleVoiceCounseling = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (isSpeaking) {
+      window.speechSynthesis.cancel();
+      setIsSpeaking(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const categoryText = formatCategoryLabel(liveEvaluation.resultCategory, language);
+    const reasonsText =
+      liveEvaluation.flaggedReasons.length > 0
+        ? liveEvaluation.flaggedReasons
+            .map((r) => (language === 'hi' ? r.titleHi : r.titleEn))
+            .join('. ')
+        : language === 'hi'
+          ? 'सभी मुख्य जांच माप सामान्य सीमा में हैं।'
+          : 'All core measurements are within standard range.';
+    const stepsText = liveEvaluation.recommendedNextSteps
+      .map((s) => (language === 'hi' ? s.actionHi : s.actionEn))
+      .join(' ');
+    const fullSpeech =
+      language === 'hi'
+        ? `स्वास्थ्य जांच परिणाम: ${categoryText}. मुख्य कारण: ${reasonsText}. अगला कदम: ${stepsText}`
+        : `Screening status: ${categoryText}. Key findings: ${reasonsText}. Recommended action: ${stepsText}`;
+
+    const utterance = new SpeechSynthesisUtterance(fullSpeech);
+    utterance.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
+    utterance.rate = 0.95;
+    utterance.onend = () => setIsSpeaking(false);
+    utterance.onerror = () => setIsSpeaking(false);
+    setIsSpeaking(true);
+    window.speechSynthesis.speak(utterance);
+  };
 
   const defaultFollowUpDate = useMemo(() => {
     const d = new Date();
@@ -626,12 +683,23 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
   const pendingFollowUpsList = useMemo(() => {
     return [...followUps]
       .filter((f) => f.status !== 'completed')
+      .filter((f) => {
+        if (selectedVillageBeat === 'all') return true;
+        const pat = patients.find((p) => p.patientId === f.patientId);
+        const village = f.patientVillage || pat?.village || 'Rampur';
+        return village === selectedVillageBeat;
+      })
       .sort((a, b) => {
         if (a.status === 'overdue' && b.status !== 'overdue') return -1;
         if (a.status !== 'overdue' && b.status === 'overdue') return 1;
         return a.scheduledDate.localeCompare(b.scheduledDate);
       });
-  }, [followUps]);
+  }, [followUps, selectedVillageBeat, patients]);
+
+  const beatFilteredPatients = useMemo(() => {
+    if (selectedVillageBeat === 'all') return patients;
+    return patients.filter((p) => p.village === selectedVillageBeat);
+  }, [patients, selectedVillageBeat]);
 
   const filteredReferrals = useMemo(() => {
     return referrals.filter((r) => {
@@ -768,6 +836,41 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
             </div>
           </div>
 
+          {/* Daily Village Beat Filter Bar (Inspired by CommCare / CHT Prioritized Task Queue) */}
+          <div className="bg-white rounded-xl border border-slate-200 p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-teal-700 shrink-0" />
+              <div>
+                <h2 className="text-xs font-bold text-slate-900">
+                  {language === 'hi'
+                    ? 'दैनिक ग्राम दौरा फ़िल्टर (Daily Village Beat Route)'
+                    : 'Daily Village Beat & Home-Visit Filter'}
+                </h2>
+                <p className="text-xs text-slate-500">
+                  {language === 'hi'
+                    ? 'एक ही गांव के सभी लंबित फॉलो-अप और मरीजों को एक साथ देखने के लिए गांव चुनें।'
+                    : 'Filter patients and due home-visits by village to plan today’s field beat.'}
+                </p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-1 p-1 bg-slate-100 rounded-lg">
+              {['all', 'Rampur', 'Khairabad', 'Chandpur', 'Maholi'].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setSelectedVillageBeat(v)}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap shrink-0 ${
+                    selectedVillageBeat === v
+                      ? 'bg-white text-teal-900 shadow-xs'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  {v === 'all' ? (language === 'hi' ? 'सभी गांव (All)' : 'All Villages') : v}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Main Home Lists: Recent Patients, Recent Screenings, Pending Follow-ups */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
             {/* Left 7 Cols: Recent Screening Results & Recent Patients */}
@@ -853,14 +956,14 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                 </div>
 
                 <div className="divide-y divide-slate-200 border border-slate-200 rounded-lg overflow-hidden">
-                  {patients.length === 0 ? (
+                  {beatFilteredPatients.length === 0 ? (
                     <div className="p-6 text-center text-slate-500 text-xs">
                       {language === 'hi'
-                        ? 'अभी कोई मरीज पंजीकृत नहीं है। नया मरीज जोड़ने के लिए "मरीज और पंजीकरण" पर क्लिक करें।'
-                        : 'No patients registered yet. Click "Register Patient" to add a new record.'}
+                        ? 'इस गांव में अभी कोई मरीज पंजीकृत नहीं है।'
+                        : 'No patients registered for this village beat yet.'}
                     </div>
                   ) : (
-                    patients.slice(0, 5).map((pat) => (
+                    beatFilteredPatients.slice(0, 5).map((pat) => (
                     <div
                       key={pat.patientId}
                       className="p-3.5 bg-white hover:bg-slate-50 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
@@ -872,8 +975,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                             ({pat.ageYears}y, {pat.sex})
                           </span>
                         </p>
-                        <p className="text-xs text-slate-500 font-mono">
-                          {pat.patientId} · {pat.village}
+                        <p className="text-xs text-slate-500 font-mono tabular-nums">
+                          {pat.patientId} · {pat.village} · ABHA: {formatAbhaId(pat.patientId)}
                         </p>
                       </div>
                       <button
@@ -1359,8 +1462,8 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                           ({pat.ageYears} yrs · {pat.sex})
                         </span>
                       </p>
-                      <p className="text-xs text-slate-500 font-mono">
-                        ID: {pat.patientId} · Village: {pat.village} · Phone: ****
+                      <p className="text-xs text-slate-500 font-mono tabular-nums">
+                        ID: {pat.patientId} · ABHA: {formatAbhaId(pat.patientId)} · Village: {pat.village} · Phone: ****
                         {pat.phoneLastFour}
                       </p>
                       {pat.knownConditions.length > 0 && (
@@ -1533,7 +1636,10 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                     <p className="text-slate-600">
                       Age: <strong>{selectedPatient.ageYears} yrs</strong> · Sex:{' '}
                       <strong className="capitalize">{selectedPatient.sex}</strong> · Village:{' '}
-                      <strong>{selectedPatient.village}</strong>
+                      <strong>{selectedPatient.village}</strong> ·{' '}
+                      <span className="font-mono text-teal-800">
+                        ABHA: {formatAbhaId(selectedPatient.patientId)}
+                      </span>
                     </p>
                   </div>
                   <div className="text-slate-600">
@@ -1869,6 +1975,156 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                   </div>
                 </div>
               </div>
+
+              {/* MoHFW CBAC (Community Based Assessment Checklist) NCD Risk Scoring (0-10) */}
+              <div className="pt-4 border-t border-slate-100 space-y-3">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-900 flex items-center gap-1.5">
+                      <Activity className="w-4 h-4 text-teal-700" />
+                      <span>
+                        {language === 'hi'
+                          ? 'MoHFW CBAC एनसीडी जोखिम मूल्यांकन (CBAC NCD Risk Checklist · 0–10)'
+                          : 'MoHFW CBAC NCD Risk Checklist (Score 0–10)'}
+                      </span>
+                    </h3>
+                    <p className="text-xs text-slate-500">
+                      {language === 'hi'
+                        ? 'स्कोर > 4 होने पर मरीज को साप्ताहिक पीएचसी एनसीडी क्लिनिक जांच के लिए चिह्नित किया जाता है।'
+                        : 'A total CBAC score > 4 flags the beneficiary for weekly PHC NCD screening (BP, Diabetes & Cancer prevention).'}
+                    </p>
+                  </div>
+                  <span
+                    className={`text-xs font-mono font-bold tabular-nums px-2.5 py-1 rounded-md border self-start sm:self-center ${
+                      liveCbac.isHighNcdRisk
+                        ? 'bg-amber-50 border-amber-300 text-amber-900'
+                        : 'bg-slate-50 border-slate-200 text-slate-700'
+                    }`}
+                  >
+                    CBAC Score: {liveCbac.totalScore}/10{' '}
+                    {liveCbac.isHighNcdRisk ? '(High Risk > 4)' : '(Routine ≤ 4)'}
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      1. Age Group (आयु वर्ग)
+                    </label>
+                    <select
+                      value={cbacInput.ageScore}
+                      onChange={(e) =>
+                        setCbacInput((prev) => ({
+                          ...prev,
+                          ageScore: Number(e.target.value) as 0 | 1 | 2,
+                        }))
+                      }
+                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
+                    >
+                      <option value={0}>Under 30 years (0 pts)</option>
+                      <option value={1}>30–49 years (1 pt)</option>
+                      <option value={2}>50 years or older (2 pts)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      2. Smoke / Smokeless Tobacco (तंबाकू)
+                    </label>
+                    <select
+                      value={cbacInput.tobaccoScore}
+                      onChange={(e) =>
+                        setCbacInput((prev) => ({
+                          ...prev,
+                          tobaccoScore: Number(e.target.value) as 0 | 1 | 2,
+                        }))
+                      }
+                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
+                    >
+                      <option value={0}>Never used (0 pts)</option>
+                      <option value={1}>Past or occasional user (1 pt)</option>
+                      <option value={2}>Daily tobacco / gutkha user (2 pts)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      3. Daily Alcohol Consumption (शराब)
+                    </label>
+                    <select
+                      value={cbacInput.alcoholScore}
+                      onChange={(e) =>
+                        setCbacInput((prev) => ({
+                          ...prev,
+                          alcoholScore: Number(e.target.value) as 0 | 1,
+                        }))
+                      }
+                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
+                    >
+                      <option value={0}>No (0 pts)</option>
+                      <option value={1}>Yes — frequent/daily (1 pt)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      4. Waist Circumference (कमर का घेरा)
+                    </label>
+                    <select
+                      value={cbacInput.waistScore}
+                      onChange={(e) =>
+                        setCbacInput((prev) => ({
+                          ...prev,
+                          waistScore: Number(e.target.value) as 0 | 1 | 2,
+                        }))
+                      }
+                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
+                    >
+                      <option value={0}>Normal (&lt;80cm F / &lt;90cm M) (0 pts)</option>
+                      <option value={1}>Elevated (80–90cm F / 90–100cm M) (1 pt)</option>
+                      <option value={2}>High (&gt;90cm F / &gt;100cm M) (2 pts)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      5. Physical Activity (शारीरिक गतिविधि)
+                    </label>
+                    <select
+                      value={cbacInput.physicalActivityScore}
+                      onChange={(e) =>
+                        setCbacInput((prev) => ({
+                          ...prev,
+                          physicalActivityScore: Number(e.target.value) as 0 | 1,
+                        }))
+                      }
+                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
+                    >
+                      <option value={0}>Active (≥150 mins/week) (0 pts)</option>
+                      <option value={1}>Sedentary (&lt;150 mins/week) (1 pt)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label className="block font-semibold text-slate-700 mb-1">
+                      6. Family History BP/Sugar/Heart (पारिवारिक इतिहास)
+                    </label>
+                    <select
+                      value={cbacInput.familyHistoryScore}
+                      onChange={(e) =>
+                        setCbacInput((prev) => ({
+                          ...prev,
+                          familyHistoryScore: Number(e.target.value) as 0 | 2,
+                        }))
+                      }
+                      className="w-full min-h-[40px] px-2.5 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-900"
+                    >
+                      <option value={0}>No family history (0 pts)</option>
+                      <option value={2}>Yes — parents/siblings with BP/DM (2 pts)</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
             </section>
 
             {/* ---------------------------------------------------------------
@@ -2012,23 +2268,53 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                     </div>
                   </div>
 
-                  {/* Optional AI Counseling Helper (Guarded) */}
+                  {/* Optional AI Counseling Helper (Guarded) + Bilingual Voice Read-Aloud */}
                   <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
                     <div className="space-y-1">
                       <p className="text-xs font-semibold text-slate-800">
-                        Optional Plain-Language Counseling Note (AI cannot downgrade urgent rules)
+                        {language === 'hi'
+                          ? 'मरीज परामर्श और ऑडियो मार्गदर्शन (Voice & Plain-Language Counseling)'
+                          : 'Patient Counseling & Audio Guidance (AI cannot downgrade urgent rules)'}
                       </p>
                       {aiNote && <p className="text-xs text-slate-600">{aiNote}</p>}
                     </div>
-                    <button
-                      type="button"
-                      disabled={aiLoading}
-                      onClick={handleRequestAiNote}
-                      className="min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-100 flex items-center gap-1.5 shrink-0 self-start sm:self-center"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-teal-700" />
-                      <span>{aiLoading ? 'Generating...' : 'Explain for Patient'}</span>
-                    </button>
+                    <div className="flex flex-wrap items-center gap-2 shrink-0 self-start sm:self-center">
+                      <button
+                        type="button"
+                        onClick={handleToggleVoiceCounseling}
+                        className={`min-h-[38px] px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors ${
+                          isSpeaking
+                            ? 'bg-teal-700 text-white border-teal-700'
+                            : 'border-slate-300 bg-white text-slate-800 hover:bg-slate-100'
+                        }`}
+                      >
+                        {isSpeaking ? (
+                          <>
+                            <VolumeX className="w-3.5 h-3.5" />
+                            <span>{language === 'hi' ? 'आवाज़ रोकें' : 'Stop Audio'}</span>
+                          </>
+                        ) : (
+                          <>
+                            <Volume2 className="w-3.5 h-3.5 text-teal-700" />
+                            <span>
+                              {language === 'hi'
+                                ? 'हिंदी में सुनें (Listen)'
+                                : 'Read Aloud (EN/HI)'}
+                            </span>
+                          </>
+                        )}
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={aiLoading}
+                        onClick={handleRequestAiNote}
+                        className="min-h-[38px] px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-xs font-semibold text-slate-800 hover:bg-slate-100 flex items-center gap-1.5"
+                      >
+                        <Sparkles className="w-3.5 h-3.5 text-teal-700" />
+                        <span>{aiLoading ? 'Generating...' : 'Explain for Patient'}</span>
+                      </button>
+                    </div>
                   </div>
 
                   {/* Mandatory Non-Diagnostic Disclaimer */}

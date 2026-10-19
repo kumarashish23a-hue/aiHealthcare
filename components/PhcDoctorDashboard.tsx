@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from 'react';
 import {
+  Activity,
   AlertTriangle,
   BarChart3,
   CheckCircle2,
@@ -31,6 +32,7 @@ import {
   UserRole,
 } from '@/src/lib/types';
 import { formatCategoryLabel, formatReferralStatus, UI_LABELS } from '@/src/lib/i18n';
+import { detectVillageSymptomClusters } from '@/src/lib/workflow-logic';
 
 interface PhcDoctorDashboardProps {
   currentUserRole: UserRole;
@@ -77,6 +79,10 @@ export const PhcDoctorDashboard: React.FC<PhcDoctorDashboardProps> = ({
     return referrals.filter((r) => r.priority === 'urgent_escalation' && r.status !== 'completed')
       .length;
   }, [referrals]);
+
+  const villageClusters = useMemo(() => {
+    return detectVillageSymptomClusters(screenings, []);
+  }, [screenings]);
 
   const filteredReferrals = useMemo(() => {
     return referrals.filter((r) => {
@@ -196,6 +202,72 @@ export const PhcDoctorDashboard: React.FC<PhcDoctorDashboardProps> = ({
           <p className="text-xs text-slate-500 mt-1">Care plan recorded</p>
         </div>
       </div>
+
+      {/* Village Epidemiological & High-Risk Surveillance Watch (Inspired by CHT / Khushi Baby) */}
+      {villageClusters.length > 0 && (
+        <div className="p-5 rounded-xl bg-white border border-slate-200 space-y-3">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div>
+              <h2 className="text-sm font-bold text-slate-900 flex items-center gap-2">
+                <Activity className="w-4 h-4 text-teal-700" />
+                <span>
+                  {language === 'hi'
+                    ? 'ग्राम महामारी विज्ञान एवं उच्च जोखिम निगरानी (Village Surveillance & Cluster Watch)'
+                    : 'Village Epidemiological & High-Risk Surveillance Watch'}
+                </span>
+              </h2>
+              <p className="text-xs text-slate-500">
+                {language === 'hi'
+                  ? 'आशा कार्यकर्ताओं की जांच के आधार पर बुखार/श्वसन, मातृ जोखिम (HRP) और गंभीर एनसीडी मामलों की ग्राम-वार सूची।'
+                  : 'Automated line-list aggregation of febrile/respiratory symptoms, high-risk pregnancies (HRP), and severe NCD cases across villages.'}
+              </p>
+            </div>
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="text-xs font-semibold text-teal-700 hover:underline self-start sm:self-center"
+              >
+                Clear Village Filter ({searchQuery})
+              </button>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {villageClusters.slice(0, 3).map((alert, idx) => (
+              <div
+                key={`${alert.village}-${alert.clusterType}-${idx}`}
+                className={`p-3.5 rounded-xl border text-xs flex flex-col justify-between gap-2.5 ${
+                  alert.severity === 'urgent'
+                    ? 'bg-red-50/40 border-red-200'
+                    : 'bg-amber-50/40 border-amber-200'
+                }`}
+              >
+                <div className="space-y-1">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-bold text-slate-900">
+                      {language === 'hi' ? alert.titleHi : alert.titleEn}
+                    </span>
+                    <span className="font-mono text-[11px] text-slate-600 tabular-nums shrink-0">
+                      {alert.patientIds.join(', ')}
+                    </span>
+                  </div>
+                  <p className="text-slate-600">
+                    {language === 'hi' ? alert.recommendationHi : alert.recommendationEn}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery(alert.village)}
+                  className="self-start min-h-[34px] px-3 py-1 rounded-lg border border-slate-300 bg-white text-slate-800 font-semibold hover:bg-slate-50"
+                >
+                  Filter {alert.village} Referrals →
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Incoming Referrals List (Table on Desktop, Stacked Cards on Mobile) */}
       <div className="p-5 sm:p-6 rounded-xl bg-white border border-slate-200 space-y-4">

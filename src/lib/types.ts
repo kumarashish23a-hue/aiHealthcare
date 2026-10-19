@@ -76,6 +76,34 @@ export interface RecommendedStep {
   timeframeHi: string;
 }
 
+export interface CbacInput {
+  ageScore: 0 | 1 | 2; // <30 (0), 30-49 (1), >=50 (2)
+  tobaccoScore: 0 | 1 | 2; // Never (0), Past/Occasional (1), Daily (2)
+  alcoholScore: 0 | 1; // No (0), Daily/Frequent (1)
+  waistScore: 0 | 1 | 2; // Normal (0), High (1), Very High (2)
+  physicalActivityScore: 0 | 1; // >=150m/wk (0), <150m/wk (1)
+  familyHistoryScore: 0 | 2; // No (0), Yes - BP/DM/Heart (2)
+}
+
+export interface CbacEvaluation {
+  totalScore: number; // 0 to 10
+  isHighNcdRisk: boolean; // score > 4 requires PHC NCD clinic screening
+  riskLabelEn: string;
+  riskLabelHi: string;
+}
+
+export interface VillageClusterAlert {
+  village: string;
+  clusterType: 'febrile_respiratory' | 'maternal_high_risk' | 'severe_ncd';
+  titleEn: string;
+  titleHi: string;
+  affectedCount: number;
+  patientIds: string[];
+  severity: 'urgent' | 'moderate';
+  recommendationEn: string;
+  recommendationHi: string;
+}
+
 export interface ScreeningInput {
   patientId: string;
   patientAgeYears?: number;
@@ -93,6 +121,7 @@ export interface ScreeningInput {
   symptoms: string[];
   symptomDurationDays: number;
   medicalHistoryNotes?: string;
+  cbacInput?: CbacInput;
 }
 
 export interface ScreeningEvaluationResult {
@@ -108,6 +137,7 @@ export interface ScreeningEvaluationResult {
   disclaimerEn: string;
   disclaimerHi: string;
   engineVersion: string;
+  cbacEvaluation?: CbacEvaluation;
 }
 
 export interface ScreeningRecord {

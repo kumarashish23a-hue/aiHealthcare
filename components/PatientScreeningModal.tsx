@@ -7,8 +7,12 @@ import {
   ClipboardCheck,
   Clock,
   FileText,
+  Printer,
+  QrCode,
   ShieldAlert,
   UserCheck,
+  Volume2,
+  VolumeX,
   X,
 } from 'lucide-react';
 import {
@@ -27,6 +31,7 @@ import {
   SYMPTOM_CATALOG,
   UI_LABELS,
 } from '@/src/lib/i18n';
+import { formatAbhaId } from '@/src/lib/screening-engine';
 
 interface PatientScreeningModalProps {
   isOpen: boolean;
@@ -79,11 +84,52 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
   );
   const [conflictServerRecord, setConflictServerRecord] = useState<ReferralRecord | null>(null);
   const [simulateStaleVersion, setSimulateStaleVersion] = useState(false);
+  const [showQrReferralSlip, setShowQrReferralSlip] = useState(false);
+  const [isSpeakingModal, setIsSpeakingModal] = useState(false);
 
   if (!isOpen || !screening) return null;
 
   const canManageReferral = currentUserRole === 'doctor' || currentUserRole === 'phc_admin';
   const labels = UI_LABELS[language];
+  const abhaHealthId = formatAbhaId(screening.patientId);
+
+  const handleToggleModalSpeech = () => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    if (isSpeakingModal) {
+      window.speechSynthesis.cancel();
+      setIsSpeakingModal(false);
+      return;
+    }
+    window.speechSynthesis.cancel();
+    const patName = patient?.fullName || screening.patientName || screening.patientId;
+    const catLabel = formatCategoryLabel(screening.resultCategory, language);
+    const reasons =
+      screening.flaggedReasons.length > 0
+        ? screening.flaggedReasons
+            .map((r) => (language === 'hi' ? r.titleHi : r.titleEn))
+            .join('. ')
+        : language === 'hi'
+          ? 'सभी मुख्य माप सामान्य हैं।'
+          : 'All core measurements are within routine bounds.';
+    const carePlanText = referral?.followUpPlan
+      ? language === 'hi'
+        ? `पीएचसी डॉक्टर की सलाह: ${referral.followUpPlan}`
+        : `PHC Doctor follow-up plan: ${referral.followUpPlan}`
+      : '';
+
+    const text =
+      language === 'hi'
+        ? `मरीज ${patName}. जांच श्रेणी: ${catLabel}. मुख्य कारण: ${reasons}. ${carePlanText}`
+        : `Patient ${patName}. Screening category: ${catLabel}. Flagged reasons: ${reasons}. ${carePlanText}`;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = language === 'hi' ? 'hi-IN' : 'en-IN';
+    utterance.rate = 0.95;
+    utterance.onend = () => setIsSpeakingModal(false);
+    utterance.onerror = () => setIsSpeakingModal(false);
+    setIsSpeakingModal(true);
+    window.speechSynthesis.speak(utterance);
+  };
 
   const handleSaveReferralUpdate = async (
     overrideStatus?: ReferralStatus,
@@ -155,12 +201,14 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-3 sm:p-6 overflow-y-auto">
       <div className="w-full max-w-4xl bg-white rounded-2xl border border-slate-200 shadow-2xl overflow-hidden my-auto max-h-[92vh] flex flex-col">
         {/* Top Modal Header */}
-        <div className="flex items-center justify-between gap-4 px-6 py-4 bg-slate-50 border-b border-slate-200 shrink-0">
+        <div className="flex flex-wrap items-center justify-between gap-4 px-6 py-4 bg-slate-50 border-b border-slate-200 shrink-0">
           <div>
-            <div className="flex items-center gap-2 text-xs text-slate-500 font-mono tabular-nums">
+            <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500 font-mono tabular-nums">
               <span>{screening.screeningId}</span>
               <span aria-hidden="true">·</span>
               <span>{screening.patientId}</span>
+              <span aria-hidden="true">·</span>
+              <span className="text-teal-800 font-semibold">ABHA: {abhaHealthId}</span>
               {referral && (
                 <>
                   <span aria-hidden="true">·</span>
@@ -172,18 +220,107 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
               {patient?.fullName || screening.patientName || screening.patientId} — Clinical Screening Summary
             </h2>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Close modal"
-            className="min-h-[44px] min-w-[44px] flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-200/70 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
+
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleToggleModalSpeech}
+              className={`min-h-[40px] px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 ${
+                isSpeakingModal
+                  ? 'bg-teal-700 text-white border-teal-700'
+                  : 'bg-white border-slate-300 text-slate-800 hover:bg-slate-100'
+              }`}
+            >
+              {isSpeakingModal ? (
+                <>
+                  <VolumeX className="w-3.5 h-3.5" />
+                  <span>{language === 'hi' ? 'रोकें' : 'Stop Audio'}</span>
+                </>
+              ) : (
+                <>
+                  <Volume2 className="w-3.5 h-3.5 text-teal-700" />
+                  <span>{language === 'hi' ? 'सुनें (Audio)' : 'Listen'}</span>
+                </>
+              )}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowQrReferralSlip((prev) => !prev)}
+              className="min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-800 hover:bg-slate-100 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            >
+              <QrCode className="w-3.5 h-3.5 text-teal-700" />
+              <span>{showQrReferralSlip ? 'Hide ABHA Slip' : 'ABHA & QR Slip'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                if (typeof window !== 'undefined') window.print();
+              }}
+              className="min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-300 bg-white text-slate-800 hover:bg-slate-100 text-xs font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            >
+              <Printer className="w-3.5 h-3.5 text-slate-700" />
+              <span>Print</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Close modal"
+              className="min-h-[40px] min-w-[40px] flex items-center justify-center rounded-xl text-slate-500 hover:bg-slate-200/70 transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Scrollable Content */}
         <div className="p-6 overflow-y-auto space-y-6">
+          {/* Expandable ABHA Digital Health Card & PHC QR Referral Slip */}
+          {showQrReferralSlip && (
+            <div className="p-4 rounded-xl bg-teal-50/60 border border-teal-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+              <div className="space-y-1 text-xs">
+                <p className="font-bold text-teal-950 text-sm">
+                  Ayushman Bharat (ABDM) Prototype Digital Referral Slip
+                </p>
+                <p className="font-mono text-slate-800 tabular-nums">
+                  ABHA Health ID: <strong>{abhaHealthId}</strong> · Patient ID:{' '}
+                  <strong>{screening.patientId}</strong>
+                </p>
+                <p className="text-slate-600">
+                  Facility: {referral?.destinationFacility || 'Simulated PHC Rampur (Demo)'} · Priority:{' '}
+                  <strong>{formatCategoryLabel(screening.resultCategory, 'en')}</strong>
+                </p>
+                <p className="text-slate-500">
+                  Present this digital/printed slip at the PHC registration counter for instant longitudinal record lookup.
+                </p>
+              </div>
+              <div className="p-2.5 bg-white rounded-lg border border-slate-200 shrink-0 flex flex-col items-center">
+                <div
+                  aria-label="Digital Referral QR Code"
+                  className="grid grid-cols-5 gap-0.5 w-16 h-16 p-1 bg-white border border-slate-300"
+                >
+                  {Array.from({ length: 25 }).map((_, i) => {
+                    const charCode = (screening.patientId + screening.screeningId).charCodeAt(
+                      i % (screening.patientId.length + screening.screeningId.length)
+                    );
+                    const filled = i === 0 || i === 4 || i === 20 || i === 24 || (charCode + i) % 2 === 0;
+                    return (
+                      <span
+                        key={i}
+                        className={filled ? 'bg-slate-900 block w-full h-full' : 'bg-slate-100 block w-full h-full'}
+                      />
+                    );
+                  })}
+                </div>
+                <span className="text-[10px] font-mono text-slate-600 mt-1 tabular-nums">
+                  {referral?.referralId || screening.screeningId}
+                </span>
+              </div>
+            </div>
+          )}
+
           {/* Patient Demographics & Triage Category Banner */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
             <div>
@@ -195,9 +332,8 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
                   {patient?.sex ?? screening.patientSex ?? '--'})
                 </span>
               </p>
-              <p className="text-xs text-slate-600 mt-0.5">
-                Village: {patient?.village || screening.patientVillage || 'Rampur'} · Phone: ****
-                {patient?.phoneLastFour || '0000'}
+              <p className="text-xs text-slate-600 mt-0.5 font-mono tabular-nums">
+                Village: {patient?.village || screening.patientVillage || 'Rampur'} · ABHA: {abhaHealthId}
               </p>
             </div>
 
@@ -483,9 +619,55 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
                     </div>
 
                     <div>
-                      <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Doctor Clinical Assessment Notes
-                      </label>
+                      <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                        <label className="block text-xs font-semibold text-slate-700">
+                          Doctor Clinical Assessment Notes & Standard Protocols
+                        </label>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDoctorNotes(
+                                'Confirmed Stage-2 Hypertension at PHC OPD. Initiated standard NPCDCS antihypertensive regimen (Amlodipine 5mg OD) + salt restriction counseling.'
+                              );
+                              setFollowUpPlan(
+                                'ASHA Home Visit in 3 days: Recheck resting BP, verify daily tablet adherence, and check for pedal edema or dizziness.'
+                              );
+                            }}
+                            className="px-2 py-1 rounded border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[11px] font-semibold text-slate-700"
+                          >
+                            + NPCDCS BP Protocol
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDoctorNotes(
+                                'High-Risk Antenatal (HRP) evaluation completed at PHC. Urine protein trace; started antihypertensive & IFA supplementation.'
+                              );
+                              setFollowUpPlan(
+                                'ASHA Home Visit in 48 hours: Check maternal BP, fetal movement count, blurred vision/headache danger signs, and birth preparedness.'
+                              );
+                            }}
+                            className="px-2 py-1 rounded border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[11px] font-semibold text-slate-700"
+                          >
+                            + Maternal ANC Protocol
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setDoctorNotes(
+                                'Febrile / respiratory assessment at PHC. Sputum AFB / malaria RDT ordered; antipyretic & ORS initiated.'
+                              );
+                              setFollowUpPlan(
+                                'ASHA Home Visit in 48 hours: Monitor SpO2 & temperature, ensure hydration, and verify lab report collection.'
+                              );
+                            }}
+                            className="px-2 py-1 rounded border border-slate-300 bg-slate-50 hover:bg-slate-100 text-[11px] font-semibold text-slate-700"
+                          >
+                            + Febrile/Resp Protocol
+                          </button>
+                        </div>
+                      </div>
                       <textarea
                         rows={2}
                         value={doctorNotes}
@@ -497,7 +679,7 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
 
                     <div>
                       <label className="block text-xs font-semibold text-slate-700 mb-1">
-                        Follow-up Plan for ASHA Worker
+                        Follow-up Plan for ASHA Worker (Counter-Referral Instructions)
                       </label>
                       <textarea
                         rows={2}

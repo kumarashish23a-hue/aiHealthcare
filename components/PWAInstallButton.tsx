@@ -10,21 +10,21 @@ interface BeforeInstallPromptEvent extends Event {
 
 export function usePWAInstall() {
   const [deferredPrompt, setDeferredPrompt] = useState<BeforeInstallPromptEvent | null>(null);
-  const [isInstalled, setIsInstalled] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    return (
-      window.matchMedia('(display-mode: standalone)').matches ||
-      (window.navigator as unknown as { standalone?: boolean }).standalone === true
-    );
-  });
-  const [isIOS] = useState<boolean>(() => {
-    if (typeof window === 'undefined') return false;
-    const userAgent = window.navigator.userAgent.toLowerCase();
-    return /iphone|ipad|ipod/.test(userAgent);
-  });
+  const [isInstalled, setIsInstalled] = useState<boolean>(false);
+  const [isIOS, setIsIOS] = useState<boolean>(false);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+
+    const standalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+    const iosDetected = /iphone|ipad|ipod/.test(window.navigator.userAgent.toLowerCase());
+
+    queueMicrotask(() => {
+      if (standalone) setIsInstalled(true);
+      if (iosDetected) setIsIOS(true);
+    });
 
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('/sw.js').catch((err) => {

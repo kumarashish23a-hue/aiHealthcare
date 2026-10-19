@@ -76,11 +76,8 @@ export const SwasthyaSetuApp: React.FC = () => {
   const [unlockPin, setUnlockPin] = useState<string>('');
   const [unlockError, setUnlockError] = useState<string>('');
 
-  // Network & Offline Sync State
-  const [browserOnline, setBrowserOnline] = useState<boolean>(() => {
-    if (typeof navigator === 'undefined') return true;
-    return navigator.onLine;
-  });
+  // Network & Offline Sync State (initialized to true so SSR and initial hydration match)
+  const [browserOnline, setBrowserOnline] = useState<boolean>(true);
   const [simulatedOffline, setSimulatedOffline] = useState<boolean>(false);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [untrustedDeviceMode, setUntrustedDeviceMode] = useState<boolean>(false);
@@ -159,6 +156,9 @@ export const SwasthyaSetuApp: React.FC = () => {
   // Monitor Browser Online/Offline events
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    if (typeof window.navigator !== 'undefined' && window.navigator.onLine === false) {
+      queueMicrotask(() => setBrowserOnline(false));
+    }
     const handleOnline = () => setBrowserOnline(true);
     const handleOffline = () => setBrowserOnline(false);
     window.addEventListener('online', handleOnline);

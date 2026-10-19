@@ -8,6 +8,7 @@ import {
   ScreeningCategory,
   ScreeningRecord,
   UserRole,
+  VillageClusterAlert,
 } from './types';
 import { formatCategoryLabel, formatFollowUpStatus, formatReferralStatus } from './i18n';
 
@@ -210,4 +211,111 @@ export function calculateDashboardMetrics(
     followUpsByStatus,
     screeningsByVillage,
   };
+}
+
+/**
+ * Aggregates screenings by village to identify potential febrile/respiratory symptom clusters,
+ * high-risk maternal cases, or concentrated severe NCD cases for PHC surveillance.
+ */
+export function detectVillageSymptomClusters(
+  screeningsList: ScreeningRecord[],
+  patientsList: PatientRecord[]
+): VillageClusterAlert[] {
+  const patientMap = new Map(patientsList.map((p) => [p.patientId, p]));
+  const byVillage = new Map<string, ScreeningRecord[]>();
+
+  for (const scr of screeningsList) {
+    const village = scr.patientVillage || patientMap.get(scr.patientId)?.village || 'Rampur';
+    const list = byVillage.get(village) || [];
+    list.push(scr);
+    byVillage.set(village, list);
+  }
+
+  const alerts: VillageClusterAlert[] = [];
+
+  for (const [village, records] of byVillage.entries()) {
+    // 1. Febrile / Respiratory surveillance
+    const febrileOrResp = records.filter(
+      (r) =>
+        (r.temperatureC != null && r.temperatureC >= 38.0) ||
+        (r.spo2Percent != null && r.spo2Percent <= 94) ||
+        r.symptoms.includes('high_fever') ||
+        r.symptoms.includes('persistent_cough_2w') ||
+        r.symptoms.includes('severe_breathlessness')
+    );
+    const febrilePatients = Array.from(new Set(febrileOrResp.map((r) => r.patientId)));
+    if (febrilePatients.length >= 1) {
+      alerts.push({
+        village,
+        clusterType: 'febrile_respiratory',
+        titleEn: `${village}: Respiratory / Febrile Surveillance (${febrilePatients.length} case${febrilePatients.length > 1 ? 's' : ''})`,
+        titleHi: `${village}: बुखार / श्वसन निगरानी (${febrilePatients.length} मामले)`,
+        affectedCount: febrilePatients.length,
+        patientIds: febrilePatients,
+        severity: febrilePatients.length >= 2 ? 'urgent' : 'moderate',
+        recommendationEn:
+          'Review sputum/fever line-list and schedule ASHA house-to-house fever & SpO2 check in neighbouring households.',
+        recommendationHi:
+          'बुखार/बलगम सूची की समीक्षा करें और आस-पास के घरों में आशा द्वारा तापमान व SpO2 जांच कराएं।',
+      });
+    }
+
+    // 2. High-Risk Maternal (ANC) cases
+    const maternalHighRisk = records.filter(
+      (r) =>
+        r.isPregnant &&
+        (r.resultCategory === 'urgent_escalation' ||
+          r.resultCategory === 'further_assessment_needed')
+    );
+    const maternalPatients = Array.from(new Set(maternalHighRisk.map((r) => r.patientId)));
+    if (maternalPatients.length >= 1) {
+      alerts.push({
+        village,
+        clusterType: 'maternal_high_risk',
+        titleEn: `${village}: High-Risk Pregnancy (HRP) Tracking (${maternalPatients.length} mother${maternalPatients.length > 1 ? 's' : ''})`,
+        titleHi: `${village}: उच्च जोखिम गर्भावस्था (HRP) निगरानी (${maternalPatients.length} गर्भवती)`,
+        affectedCount: maternalPatients.length,
+        patientIds: maternalPatients,
+        severity: 'urgent',
+        recommendationEn:
+          'Ensure PMSMA / PHC Medical Officer antenatal evaluation, BP monitoring, and iron-folic acid / transport readiness.',
+        recommendationHi:
+          'पीएचसी डॉक्टर द्वारा प्रसवपूर्व जांच, बीपी निगरानी और आपातकालीन वाहन की तैयारी सुनिश्चित करें।',
+      });
+    }
+
+    // 3. Severe Hypertension / Metabolic NCD cluster
+    const severeNcd = records.filter(
+      (r) =>
+        (r.systolicBp != null && r.systolicBp >= 160) ||
+        (r.diastolicBp != null && r.diastolicBp >= 100) ||
+        (r.randomBloodGlucoseMgDl != null && r.randomBloodGlucoseMgDl >= 220)
+    );
+    const ncdPatients = Array.from(new Set(severeNcd.map((r) => r.patientId)));
+    if (ncdPatients.length >= 1) {
+      alerts.push({
+        village,
+        clusterType: 'severe_ncd',
+        titleEn: `${village}: Uncontrolled BP / Glucose Priority Line-List (${ncdPatients.length} patient${ncdPatients.length > 1 ? 's' : ''})`,
+        titleHi: `${village}: अनियंत्रित बीपी / शुगर प्राथमिकता सूची (${ncdPatients.length} मरीज)`,
+        affectedCount: ncdPatients.length,
+        patientIds: ncdPatients,
+        severity: ncdPatients.some((pid) =>
+          records.some((r) => r.patientId === pid && r.resultCategory === 'urgent_escalation')
+        )
+          ? 'urgent'
+          : 'moderate',
+        recommendationEn:
+          'Prioritize for weekly CPHC NCD clinic dispensation and 7-day ASHA medication adherence check.',
+        recommendationHi:
+          'साप्ताहिक पीएचसी एनसीडी क्लिनिक और 7-दिवसीय आशा दवा अनुपालन जांच में प्राथमिकता दें।',
+      });
+    }
+  }
+
+  return alerts.sort((a, b) => {
+    if (a.severity === 'urgent' && b.severity !== 'urgent') return -1;
+    if (a.severity !== 'urgent' && b.severity === 'urgent') return 1;
+    return b.affectedCount - a.affectedCount;
+  });
 }
