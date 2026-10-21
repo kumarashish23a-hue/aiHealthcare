@@ -7,10 +7,26 @@ export const users = pgTable('users', {
   email: text('email').notNull(),
   fullName: text('full_name').notNull().default('ASHA Health Worker'),
   role: text('role').notNull().default('health_worker'), // 'health_worker' | 'doctor' | 'phc_admin'
-  facilityName: text('facility_name').notNull().default('Simulated PHC Rampur, Sitapur — Uttar Pradesh'),
+  facilityName: text('facility_name').notNull().default('PHC Rampur, Sitapur, Uttar Pradesh'),
   preferredLanguage: text('preferred_language').notNull().default('en'),
+  // Added in migration 0002: account activation + health-worker scoping.
+  isActive: boolean('is_active').notNull().default(true),
+  assignedVillage: text('assigned_village'),
   createdAt: timestamp('created_at').defaultNow().notNull(),
   updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
+export const facilities = pgTable('facilities', {
+  id: serial('id').primaryKey(),
+  facilityId: text('facility_id').notNull().unique(),
+  name: text('name').notNull(),
+  type: text('type').notNull(), // 'PHC' | 'CHC' | 'SubCentre' | 'DistrictHospital'
+  village: text('village'),
+  blockName: text('block_name').notNull(),
+  district: text('district').notNull(),
+  state: text('state').notNull(),
+  isActive: boolean('is_active').notNull().default(true),
+  createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
 export const healthWorkerProfiles = pgTable('health_worker_profiles', {

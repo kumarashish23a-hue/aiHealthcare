@@ -8,11 +8,13 @@ import {
   CheckCircle2,
   ClipboardList,
   Clock,
+  ListOrdered,
   MapPin,
   ShieldAlert,
   Users,
 } from 'lucide-react';
 import { formatCategoryLabel, formatFollowUpStatus } from '@/src/lib/i18n';
+import { buildPriorityQueue, formatWaitingTime } from '@/src/lib/priority-queue';
 import { detectVillageSymptomClusters } from '@/src/lib/workflow-logic';
 import { useDoctorWorkspace } from './doctor-context';
 
@@ -23,6 +25,14 @@ export default function DoctorOverviewPage() {
   const villageClusters = useMemo(
     () => detectVillageSymptomClusters(screenings, patients),
     [screenings, patients]
+  );
+
+  // Deterministic rules only — see src/lib/priority-queue.ts. The queue
+  // orders patients who already have an open need; it never changes a
+  // screening category.
+  const priorityQueue = useMemo(
+    () => buildPriorityQueue({ patients, screenings, referrals, followUps, now: new Date() }),
+    [patients, screenings, referrals, followUps]
   );
 
   const urgentScreenings = useMemo(
@@ -116,6 +126,87 @@ export default function DoctorOverviewPage() {
             <p className="text-xs text-slate-500 mt-1">{isHi ? c.subHi : c.subEn}</p>
           </div>
         ))}
+      </div>
+
+      {/* Priority queue — who needs attention first (deterministic rules) */}
+      <div className="p-5 rounded-xl bg-white border border-slate-200 space-y-3">
+        <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wide flex items-center gap-2">
+          <ListOrdered className="w-4 h-4 text-teal-700" />
+          {isHi ? 'प्राथमिकता सूची' : 'Priority Queue'}
+          <span className="text-[11px] font-medium normal-case tracking-normal text-slate-500">
+            {isHi ? '— पहले देखें: सबसे ऊपर वाला मरीज' : '— see first: patient at the top'}
+          </span>
+        </h2>
+        {priorityQueue.length === 0 ? (
+          <p className="text-xs text-slate-500 flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            {isHi
+              ? 'प्राथमिकता सूची खाली है — कोई मरीज प्रतीक्षा में नहीं है।'
+              : 'Priority queue is empty — no patient is waiting for attention.'}
+          </p>
+        ) : (
+          <ol className="space-y-2">
+            {priorityQueue.map((entry) => {
+              const topReason = entry.reasons[0];
+              const badgeClasses: Record<typeof entry.category, string> = {
+                urgent_escalation: 'bg-red-100 text-red-700 border-red-200',
+                further_assessment_needed: 'bg-amber-100 text-amber-800 border-amber-200',
+                routine_follow_up: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+                incomplete_information: 'bg-slate-100 text-slate-600 border-slate-200',
+              };
+              const href = entry.referralId
+                ? '/doctor/referrals'
+                : entry.screeningId
+                  ? `/doctor/screenings?focus=${entry.screeningId}`
+                  : '/doctor/referrals';
+              return (
+                <li key={entry.patientId}>
+                  <Link
+                    href={href}
+                    className="p-3 rounded-lg bg-slate-50 border border-slate-200 hover:border-teal-400 flex items-start sm:items-center gap-3"
+                  >
+                    <span
+                      className={`w-8 h-8 rounded-full flex items-center justify-center text-sm font-bold shrink-0 ${
+                        entry.category === 'urgent_escalation'
+                          ? 'bg-red-600 text-white'
+                          : 'bg-teal-700 text-white'
+                      }`}
+                    >
+                      {entry.rank}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs font-bold text-slate-900">
+                        {entry.patientName}
+                        <span className="font-normal text-slate-500">
+                          {' '}· {entry.village} · {isHi ? 'आयु' : 'Age'} {entry.ageYears}
+                          {entry.isPregnant ? (isHi ? ' · गर्भवती' : ' · Pregnant') : ''}
+                        </span>
+                      </p>
+                      {topReason && (
+                        <p className="text-[11px] text-slate-600 truncate">
+                          {isHi ? topReason.hi : topReason.en}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex flex-col items-end gap-1 shrink-0">
+                      <span
+                        className={`text-[11px] font-semibold px-2 py-0.5 rounded-full border ${badgeClasses[entry.category]}`}
+                      >
+                        {formatCategoryLabel(entry.category, language)}
+                      </span>
+                      <span className="text-[11px] text-slate-500 flex items-center gap-1">
+                        <Clock className="w-3 h-3" />
+                        {isHi
+                          ? `${formatWaitingTime(entry.waitingMinutes)} से प्रतीक्षा`
+                          : `waiting ${formatWaitingTime(entry.waitingMinutes)}`}
+                      </span>
+                    </div>
+                  </Link>
+                </li>
+              );
+            })}
+          </ol>
+        )}
       </div>
 
       {/* Total patients + screenings strip */}

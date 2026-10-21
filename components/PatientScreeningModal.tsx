@@ -289,7 +289,7 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
                   <strong>{screening.patientId}</strong>
                 </p>
                 <p className="text-slate-600">
-                  Facility: {referral?.destinationFacility || 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)'} · Priority:{' '}
+                  Facility: {referral?.destinationFacility || 'PHC Rampur, Sitapur, Uttar Pradesh'} · Priority:{' '}
                   <strong>{formatCategoryLabel(screening.resultCategory, 'en')}</strong>
                 </p>
                 <p className="text-slate-500">
@@ -514,7 +514,7 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
               <div>
                 <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                   <ClipboardCheck className="w-4 h-4 text-teal-700" />
-                  <span>Simulated PHC Referral & Follow-up Management</span>
+                  <span>PHC Referral & Follow-up Management</span>
                 </h3>
                 <p className="text-xs text-slate-500 mt-0.5">{labels.simulatedPhcNotice}</p>
               </div>
@@ -524,7 +524,7 @@ export const PatientScreeningModal: React.FC<PatientScreeningModalProps> = ({
                   onClick={() => onCreateReferralFromScreening(screening)}
                   className="min-h-[44px] px-4 py-2 rounded-xl bg-teal-700 text-white text-xs font-semibold hover:bg-teal-800 transition-colors"
                 >
-                  Create Simulated PHC Referral
+                  Create PHC Referral
                 </button>
               )}
             </div>

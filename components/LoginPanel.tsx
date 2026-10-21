@@ -12,6 +12,8 @@ import {
 } from 'lucide-react';
 import { UI_LABELS } from '@/src/lib/i18n';
 import type { LanguageCode, UserRole } from '@/src/lib/types';
+import { getSupabaseBrowserClient } from '@/src/lib/supabase-client';
+import { buildAuthHeaders, setAccessToken } from '@/src/lib/auth-token';
 import ThemeToggle from './ThemeToggle';
 
 export interface LocalProfile {
@@ -101,12 +103,43 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
   const [fullName, setFullName] = useState('');
   const [phoneLastFour, setPhoneLastFour] = useState('');
   const [facilityName, setFacilityName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+
+  const supabase = getSupabaseBrowserClient();
+  const authConfigured = supabase !== null;
 
   const meta = roleMeta.find((m) => m.role === activeRole) || roleMeta[0];
   const isHi = language === 'hi';
 
-  const enter = (profile: LocalProfile) => {
+  const enter = async (profile: LocalProfile) => {
+    // Entering a saved profile requires a live Supabase session for the
+    // SAME account; otherwise go to the sign-in form.
+    if (!supabase) {
+      setFormError(
+        isHi
+          ? 'साइन-इन कॉन्फ़िगर नहीं है — व्यवस्थापक से संपर्क करें।'
+          : 'Sign-in is not configured on this install — contact your administrator.'
+      );
+      setStage('details');
+      return;
+    }
+    const { data } = await supabase.auth.getSession();
+    if (!data.session || data.session.user.id !== profile.uid) {
+      setFormError(
+        isHi
+          ? 'इस प्रोफाइल के लिए पहले ईमेल और पासवर्ड से साइन इन करें।'
+          : 'Please sign in with this profile’s email and password first.'
+      );
+      setFullName(profile.fullName);
+      setPhoneLastFour(profile.phoneLastFour);
+      setFacilityName(profile.facilityName);
+      setStage('details');
+      return;
+    }
+    setAccessToken(data.session.access_token);
     const updated = loadProfiles().map((p) =>
       p.uid === profile.uid ? { ...p, lastUsedAt: new Date().toISOString() } : p
     );
@@ -130,15 +163,18 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
     setFullName('');
     setPhoneLastFour('');
     setFacilityName('');
+    setEmail('');
+    setPassword('');
     setFormError(null);
     setStage('details');
   };
 
-  const saveAndEnter = () => {
+  const saveAndEnter = async (mode: 'signin' | 'signup') => {
     const name = fullName.trim();
     const phone = phoneLastFour.trim();
     const facility =
       facilityName.trim() || (isHi ? meta.facilityDefaultHi : meta.facilityDefaultEn);
+    const emailClean = email.trim().toLowerCase();
 
     if (name.length < 2) {
       setFormError(
@@ -152,34 +188,80 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
       );
       return;
     }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailClean)) {
+      setFormError(isHi ? 'कृपया सही ईमेल दर्ज करें।' : 'Please enter a valid email address.');
+      return;
+    }
+    if (password.length < 6) {
+      setFormError(
+        isHi ? 'पासवर्ड कम से कम 6 अक्षरों का होना चाहिए।' : 'Password must be at least 6 characters.'
+      );
+      return;
+    }
+    if (!supabase) {
+      setFormError(
+        isHi
+          ? 'साइन-इन कॉन्फ़िगर नहीं है (NEXT_PUBLIC_SUPABASE_URL / ANON_KEY गायब) — व्यवस्थापक से संपर्क करें।'
+          : 'Sign-in is not configured (missing NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY) — contact your administrator.'
+      );
+      return;
+    }
 
-    const profile: LocalProfile = {
-      uid: `LOCAL-${Date.now().toString(36).toUpperCase()}-${Math.random()
-        .toString(36)
-        .slice(2, 5)
-        .toUpperCase()}`,
-      role: activeRole,
-      fullName: name,
-      phoneLastFour: phone,
-      facilityName: facility,
-      createdAt: new Date().toISOString(),
-      lastUsedAt: new Date().toISOString(),
-    };
-    const stored = [...loadProfiles(), profile];
-    persistProfiles(stored);
-    // Persist to the server store so the /admin panel lists all saved profiles.
-    void fetch('/api/workspace', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: activeRole === 'doctor' ? 'Bearer demo-session-doctor' : 'Bearer demo-session-asha',
-        'X-Active-Role': activeRole,
-      },
-      body: JSON.stringify({ action: 'save_profile', payload: profile }),
-    }).catch(() => {
-      // Prototype: device-local copy remains authoritative if the server is unreachable.
-    });
-    onEnter(profile);
+    setAuthBusy(true);
+    setFormError(null);
+    try {
+      const authResult =
+        mode === 'signup'
+          ? await supabase.auth.signUp({ email: emailClean, password })
+          : await supabase.auth.signInWithPassword({ email: emailClean, password });
+      if (authResult.error) {
+        setFormError(authResult.error.message);
+        return;
+      }
+      const session = authResult.data.session;
+      const user = authResult.data.user;
+      if (!user) {
+        setFormError('Sign-in did not return a user. Please try again.');
+        return;
+      }
+      if (!session) {
+        // Sign-up with email confirmation enabled: no session yet.
+        setFormError(
+          isHi
+            ? 'खाता बनाया गया। कृपया ईमेल की पुष्टि करें (या व्यवस्थापक से कहें), फिर साइन इन करें।'
+            : 'Account created. Please confirm your email (or ask your admin to confirm it), then sign in.'
+        );
+        return;
+      }
+      setAccessToken(session.access_token);
+
+      const profile: LocalProfile = {
+        uid: user.id,
+        role: activeRole,
+        fullName: name,
+        phoneLastFour: phone,
+        facilityName: facility,
+        createdAt: new Date().toISOString(),
+        lastUsedAt: new Date().toISOString(),
+      };
+      const stored = [...loadProfiles().filter((p) => p.uid !== profile.uid), profile];
+      persistProfiles(stored);
+      setProfiles(stored.filter((p) => p.role === activeRole));
+      // Persist to the server store so the /admin panel lists this
+      // profile. The server requires payload.uid === the authenticated
+      // uid and payload.role === the role ON THE ACCOUNT (set by an
+      // admin); a mismatch is reported in the response, not hidden.
+      void fetch('/api/workspace', {
+        method: 'POST',
+        headers: buildAuthHeaders(),
+        body: JSON.stringify({ action: 'save_profile', payload: profile }),
+      }).catch(() => {
+        // Device-local copy remains if the server is unreachable.
+      });
+      onEnter(profile);
+    } finally {
+      setAuthBusy(false);
+    }
   };
 
   return (
@@ -221,8 +303,8 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
                 </h2>
                 <p className="text-xs text-slate-500">
                   {isHi
-                    ? 'लॉगिन (पासवर्ड/OTP) इस बिल्ड में बंद है — मूल विवरण दर्ज करके प्रोफाइल सेव करें।'
-                    : 'Login (password/OTP) is switched off in this build — enter basic details to save a profile.'}
+                    ? 'अपनी भूमिका चुनें, फिर ईमेल और पासवर्ड से साइन इन करें। आपकी भूमिका आपके खाते पर व्यवस्थापक द्वारा तय की जाती है।'
+                    : 'Select your role, then sign in with email and password. Your role is set on your account by the PHC admin — it must match the role you pick here.'}
                 </p>
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -277,8 +359,8 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
                 </h2>
                 <p className="text-xs text-slate-500">
                   {isHi
-                    ? 'दर्ज किए गए बेसिक डिटेल्स के साथ पहले वाली प्रोफाइल चुनें या नई प्रोफाइल बनाएं।'
-                    : 'Continue with a previously entered profile, or create a new basic-details profile.'}
+                    ? 'पहले से साइन इन की गई प्रोफाइल चुनें, या नए खाते से साइन इन करें।'
+                    : 'Continue with a profile you signed in with before, or sign in with a new account.'}
                 </p>
               </div>
 
@@ -332,7 +414,7 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
                 className="w-full min-h-[44px] px-4 py-2 rounded-lg border-2 border-dashed border-teal-400 bg-teal-50/40 text-teal-800 text-sm font-semibold hover:bg-teal-50 flex items-center justify-center gap-2"
               >
                 <Plus className="w-4 h-4" />
-                {isHi ? 'नई प्रोफाइल बनाएं (बेसिक डिटेल्स)' : 'Create new profile (basic details)'}
+                {isHi ? 'नए खाते से साइन इन करें' : 'Sign in with a new account'}
               </button>
             </div>
           )}
@@ -350,12 +432,12 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
 
               <div className="space-y-1">
                 <h2 className="text-lg font-bold text-slate-900">
-                  {isHi ? `${meta.titleHi} — बेसिक डिटेल्स` : `${meta.titleEn} — Basic Details`}
+                  {isHi ? `${meta.titleHi} — साइन इन` : `${meta.titleEn} — Sign In`}
                 </h2>
                 <p className="text-xs text-slate-500">
                   {isHi
-                    ? 'यह विवरण डिवाइस पर लोकल सेव होता है (कोई पासवर्ड/OTP नहीं)।'
-                    : 'These details are saved locally on this device (no password/OTP used).'}
+                    ? 'ईमेल और पासवर्ड से साइन इन करें। नाम, फोन के अंतिम 4 अंक और सुविधा इस डिवाइस पर प्रोफाइल के रूप में सेव होते हैं।'
+                    : 'Sign in with your email and password. Your name, phone last-4 and facility are saved on this device as your profile.'}
                 </p>
               </div>
 
@@ -400,7 +482,41 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
                     className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-800 mb-1">
+                    {isHi ? 'ईमेल (Email)' : 'Email'} <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="email"
+                    autoComplete="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.org"
+                    className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-800 mb-1">
+                    {isHi ? 'पासवर्ड (Password)' : 'Password'} <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder={isHi ? 'कम से कम 6 अक्षर' : 'Min 6 characters'}
+                    className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-sm text-slate-900 bg-white"
+                  />
+                </div>
               </div>
+
+              {!authConfigured && (
+                <div className="p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium">
+                  {isHi
+                    ? 'साइन-इन कॉन्फ़िगर नहीं है: NEXT_PUBLIC_SUPABASE_URL और NEXT_PUBLIC_SUPABASE_ANON_KEY सेट नहीं हैं। व्यवस्थापक से संपर्क करें।'
+                    : 'Sign-in is not configured: NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are not set. Contact your administrator.'}
+                </div>
+              )}
 
               {formError && (
                 <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-red-800 text-xs font-medium">
@@ -408,14 +524,30 @@ export const LoginPanel: React.FC<LoginPanelProps> = ({
                 </div>
               )}
 
-              <button
-                type="button"
-                disabled={false}
-                onClick={saveAndEnter}
-                className="w-full min-h-[48px] px-6 py-3 rounded-lg bg-teal-700 text-white text-sm font-semibold hover:bg-teal-800 transition-colors"
-              >
-                {isHi ? 'सेव करें और आगे बढ़ें' : 'Save Profile & Continue'}
-              </button>
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  disabled={authBusy || !authConfigured}
+                  onClick={() => void saveAndEnter('signin')}
+                  className="w-full min-h-[48px] px-6 py-3 rounded-lg bg-teal-700 text-white text-sm font-semibold hover:bg-teal-800 transition-colors disabled:opacity-50"
+                >
+                  {authBusy
+                    ? isHi
+                      ? 'कृपया प्रतीक्षा करें…'
+                      : 'Please wait…'
+                    : isHi
+                      ? 'साइन इन करें और आगे बढ़ें'
+                      : 'Sign In & Continue'}
+                </button>
+                <button
+                  type="button"
+                  disabled={authBusy || !authConfigured}
+                  onClick={() => void saveAndEnter('signup')}
+                  className="w-full min-h-[40px] px-6 py-2 rounded-lg border border-teal-700 text-teal-800 bg-white text-xs font-semibold hover:bg-teal-50 transition-colors disabled:opacity-50"
+                >
+                  {isHi ? 'नया खाता बनाएं' : 'Create a new account'}
+                </button>
+              </div>
             </div>
           )}
         </div>

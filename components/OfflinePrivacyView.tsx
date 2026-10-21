@@ -9,13 +9,11 @@ import {
   Lock,
   RefreshCw,
   ShieldCheck,
-  Stethoscope,
   Trash2,
-  UserCheck,
   Wifi,
   WifiOff,
 } from 'lucide-react';
-import { AuditLogEntry, LanguageCode, UserRole } from '@/src/lib/types';
+import { AuditLogEntry, LanguageCode } from '@/src/lib/types';
 import { QueuedSyncMutation } from '@/src/lib/offline-db';
 import { PWAInstallButton } from './PWAInstallButton';
 
@@ -23,8 +21,6 @@ interface OfflinePrivacyViewProps {
   isOffline: boolean;
   simulatedOffline?: boolean;
   onToggleSimulatedOffline?: () => void;
-  activeRole?: UserRole;
-  onChangeRole?: (role: UserRole) => void;
   onChangeLanguage?: (lang: LanguageCode) => void;
   isSyncing: boolean;
   storageSafety: { isSupported: boolean; isSecureContext: boolean; reason?: string };
@@ -46,8 +42,6 @@ export const OfflinePrivacyView: React.FC<OfflinePrivacyViewProps> = ({
   isOffline,
   simulatedOffline = false,
   onToggleSimulatedOffline,
-  activeRole = 'health_worker',
-  onChangeRole,
   onChangeLanguage,
   isSyncing,
   storageSafety,
@@ -128,38 +122,6 @@ export const OfflinePrivacyView: React.FC<OfflinePrivacyViewProps> = ({
             </div>
           </div>
 
-          {/* Active Role Switcher (for Demo Evaluation) */}
-          <div className="p-4 rounded-lg border border-slate-200 bg-slate-50 space-y-2">
-            <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
-              <UserCheck className="w-4 h-4 text-teal-700" />
-              <span>Active Role (Demo Evaluation)</span>
-            </div>
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => onChangeRole?.('health_worker')}
-                className={`flex-1 min-h-[40px] px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
-                  activeRole === 'health_worker'
-                    ? 'bg-teal-700 text-white border-teal-700'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                }`}
-              >
-                ASHA Worker
-              </button>
-              <button
-                type="button"
-                onClick={() => onChangeRole?.('doctor')}
-                className={`flex-1 min-h-[40px] px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors flex items-center justify-center gap-1.5 ${
-                  activeRole === 'doctor'
-                    ? 'bg-teal-700 text-white border-teal-700'
-                    : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-100'
-                }`}
-              >
-                <Stethoscope className="w-3.5 h-3.5" />
-                <span>PHC Doctor</span>
-              </button>
-            </div>
-          </div>
         </div>
 
         {/* Network Simulation & Screen Lock */}
@@ -194,7 +156,7 @@ export const OfflinePrivacyView: React.FC<OfflinePrivacyViewProps> = ({
             className="min-h-[42px] px-4 py-2 rounded-lg bg-slate-900 text-white text-xs font-semibold hover:bg-slate-800 transition-colors flex items-center gap-2"
           >
             <Lock className="w-4 h-4" />
-            <span>Lock Session Screen (PIN: 1234)</span>
+            <span>Lock Session Screen (PIN)</span>
           </button>
         </div>
       </div>

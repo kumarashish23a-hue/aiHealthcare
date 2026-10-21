@@ -20,7 +20,6 @@ export default function DoctorReferralsPage() {
   } = useDoctorWorkspace();
 
   const [inspectedScreeningId, setInspectedScreeningId] = useState<string | null>(null);
-  const [rbacMessage, setRbacMessage] = useState<string | null>(null);
 
   const inspectedScreening = useMemo(
     () => screenings.find((s) => s.screeningId === inspectedScreeningId),
@@ -47,34 +46,8 @@ export default function DoctorReferralsPage() {
     [followUps, inspectedScreening]
   );
 
-  const testUnauthorizedDoctorAction = async (): Promise<string> => {
-    const res = await fetch('/api/workspace', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer demo-session-asha',
-        'X-Active-Role': 'health_worker',
-      },
-      body: JSON.stringify({
-        action: 'update_referral',
-        payload: {
-          referralId: 'REF-PHC-5001',
-          status: 'completed',
-          expectedVersion: 1,
-        },
-      }),
-    });
-    const data = await res.json();
-    return `Server Response HTTP ${res.status}: ${data.error}`;
-  };
-
   return (
     <div className="space-y-4">
-      {rbacMessage && (
-        <div className="p-3 rounded-lg bg-amber-50 border border-amber-300 text-xs font-mono text-amber-950">
-          {rbacMessage}
-        </div>
-      )}
 
       <PhcDoctorDashboard
         currentUserRole="doctor"
@@ -82,8 +55,6 @@ export default function DoctorReferralsPage() {
         metrics={metrics}
         referrals={referrals}
         screenings={screenings}
-        onSwitchToDoctorRole={() => setRbacMessage(null)}
-        onTestUnauthorizedDoctorAction={testUnauthorizedDoctorAction}
         onOpenReferralSummary={(ref: ReferralRecord) => setInspectedScreeningId(ref.screeningId)}
         onQuickUpdateReferralStatus={async (ref: ReferralRecord, status: ReferralStatus) => {
           await updateReferral({

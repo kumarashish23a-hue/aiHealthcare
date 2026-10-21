@@ -39,6 +39,8 @@ import {
   detectVersionConflict,
 } from '../lib/workflow-logic.ts';
 import { PROTOTYPE_ENGINE_VERSION } from '../lib/screening-engine.ts';
+import { scopeWorkspaceData, type WorkspaceData } from '../lib/scoping.ts';
+import { formatFacilityLabel, getDefaultReferralFacility } from '../lib/facilities.ts';
 
 let isSeedingComplete = false;
 
@@ -68,10 +70,10 @@ const LEGACY_PRESET_AUDIT_IDS = ['AUD-101', 'AUD-102', 'AUD-103', 'AUD-104'];
 
 // Robust in-memory store for local execution, tests, and offline resilience
 const memoryStore = {
-  users: new Map<string, AppUser>([
-    [DEMO_USERS.health_worker.uid, { ...DEMO_USERS.health_worker }],
-    [DEMO_USERS.doctor.uid, { ...DEMO_USERS.doctor }],
-  ]),
+  // No pre-seeded users: accounts exist only after a verified Supabase
+  // sign-in creates them (getOrCreateUser) or the explicit seed-demo
+  // script (SEED_DEMO_DATA=true) inserts the demo fixtures.
+  users: new Map<string, AppUser>(),
   patients: [...INITIAL_SYNTHETIC_PATIENTS],
   screenings: [...INITIAL_SYNTHETIC_SCREENINGS],
   referrals: [...INITIAL_SYNTHETIC_REFERRALS],
@@ -115,10 +117,11 @@ export async function getOrCreateUser(
         role: defaultRole,
         facilityName:
           defaultRole === 'doctor'
-            ? 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)'
+            ? formatFacilityLabel(getDefaultReferralFacility())
             : 'Sub-Centre Rampur · Sitapur, Uttar Pradesh',
         preferredLanguage: 'en',
-        isDemo: true,
+        isDemo: false,
+        isActive: true,
       };
       memoryStore.users.set(uid, user);
     }
@@ -140,7 +143,7 @@ export async function getOrCreateUser(
         role: defaultRole,
         facilityName:
           defaultRole === 'doctor'
-            ? 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)'
+            ? formatFacilityLabel(getDefaultReferralFacility())
             : 'Sub-Centre Rampur · Sitapur, Uttar Pradesh',
         preferredLanguage: 'en',
       })
@@ -154,6 +157,11 @@ export async function getOrCreateUser(
       .returning();
 
     const row = result[0];
+    const profileRows = await db
+      .select()
+      .from(healthWorkerProfiles)
+      .where(eq(healthWorkerProfiles.userUid, row.uid));
+    const wp = profileRows[0];
     return {
       uid: row.uid,
       email: row.email,
@@ -161,6 +169,18 @@ export async function getOrCreateUser(
       role: row.role as UserRole,
       facilityName: row.facilityName,
       preferredLanguage: (row.preferredLanguage as 'en' | 'hi') || 'en',
+      isActive: row.isActive,
+      assignedVillage: row.assignedVillage || wp?.assignedVillage || undefined,
+      workerProfile: wp
+        ? {
+            workerCode: wp.workerCode,
+            assignedVillage: wp.assignedVillage,
+            blockName: wp.blockName,
+            district: wp.district,
+            primaryPhc: wp.primaryPhc,
+            phoneLastFour: wp.phoneLastFour,
+          }
+        : undefined,
     };
   } catch (error) {
     console.warn('Database unavailable in getOrCreateUser, using memory store:', error);
@@ -169,6 +189,13 @@ export async function getOrCreateUser(
 }
 
 export async function ensureSyntheticDemoSeeded(): Promise<void> {
+  // Phase 2: synthetic seeding is NEVER automatic. It runs only when the
+  // operator explicitly sets SEED_DEMO_DATA=true (local/demo installs),
+  // e.g. via scripts/seed-demo. Production must never set this flag.
+  if (process.env.SEED_DEMO_DATA !== 'true') {
+    isSeedingComplete = true;
+    return;
+  }
   if (isSeedingComplete || !isSqlConfigured) {
     isSeedingComplete = true;
     return;
@@ -709,7 +736,7 @@ export async function createPatientRecord(
       consentTimestamp: payload.consentTimestamp,
       knownConditions: payload.knownConditions || [],
       registeredByUid: actor.uid,
-      isSynthetic: true,
+      isSynthetic: false,
       version: 1,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
@@ -724,7 +751,7 @@ export async function createPatientRecord(
       action: 'PATIENT_REGISTERED',
       targetType: 'patient',
       targetId: record.patientId,
-      summary: `Registered synthetic patient ${record.patientId} (${record.village}) with documented consent.`,
+      summary: `Registered patient ${record.patientId} (${record.village}) with documented consent.`,
     });
 
     return { duplicatePrevented: false, record };
@@ -779,7 +806,7 @@ export async function createPatientRecord(
         consentTimestamp: payload.consentTimestamp,
         knownConditions: JSON.stringify(payload.knownConditions || []),
         registeredByUid: actor.uid,
-        isSynthetic: true,
+        isSynthetic: false,
         version: 1,
       })
       .returning();
@@ -791,7 +818,7 @@ export async function createPatientRecord(
       action: 'PATIENT_REGISTERED',
       targetType: 'patient',
       targetId: row.patientId,
-      summary: `Registered synthetic patient ${row.patientId} (${row.village}) with documented consent.`,
+      summary: `Registered patient ${row.patientId} (${row.village}) with documented consent.`,
     });
 
     return {
@@ -1045,7 +1072,7 @@ export async function createReferralRecord(
       reasonForReferral: payload.reasonForReferral,
       destinationFacility: payload.destinationFacility,
       status: 'pending',
-      assignedProfessional: 'Dr. Rajesh Verma (MO-PHC)',
+      assignedProfessional: '',
       doctorNotes: '',
       followUpPlan: '',
       unableReason: '',
@@ -1053,7 +1080,7 @@ export async function createReferralRecord(
       createdDate: payload.createdDate,
       updatedDate: payload.createdDate,
       version: 1,
-      isSimulated: true,
+      isSimulated: false,
     };
     memoryStore.referrals.unshift(newReferral);
     schedulePersist();
@@ -1064,7 +1091,7 @@ export async function createReferralRecord(
       action: 'REFERRAL_CREATED',
       targetType: 'referral',
       targetId: payload.referralId,
-      summary: `Created simulated PHC referral ${payload.referralId} (${payload.priority}) for screening ${payload.screeningId}.`,
+      summary: `Created PHC referral ${payload.referralId} (${payload.priority}) for screening ${payload.screeningId}.`,
     });
 
     return { referralId: payload.referralId, duplicatePrevented: false };
@@ -1107,7 +1134,7 @@ export async function createReferralRecord(
       reasonForReferral: payload.reasonForReferral,
       destinationFacility: payload.destinationFacility,
       status: 'pending',
-      assignedProfessional: 'Dr. Rajesh Verma (MO-PHC)',
+      assignedProfessional: '',
       doctorNotes: '',
       followUpPlan: '',
       unableReason: '',
@@ -1115,7 +1142,7 @@ export async function createReferralRecord(
       createdDate: payload.createdDate,
       updatedDate: payload.createdDate,
       version: 1,
-      isSimulated: true,
+      isSimulated: false,
     });
 
     await recordAuditLog({
@@ -1124,7 +1151,7 @@ export async function createReferralRecord(
       action: 'REFERRAL_CREATED',
       targetType: 'referral',
       targetId: payload.referralId,
-      summary: `Created simulated PHC referral ${payload.referralId} (${payload.priority}) for screening ${payload.screeningId}.`,
+      summary: `Created PHC referral ${payload.referralId} (${payload.priority}) for screening ${payload.screeningId}.`,
     });
 
     return {
@@ -1479,5 +1506,278 @@ export async function logSyncEventInDb(params: {
       .onConflictDoNothing();
   } catch (error) {
     console.warn('Failed to record sync event in DB:', error);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Phase 1/5 additions: user lookup, scoped workspace reads, admin user mgmt
+// ---------------------------------------------------------------------------
+
+/** Look up a user by uid WITHOUT creating one. Returns null if absent. */
+export async function getUserByUid(uid: string): Promise<AppUser | null> {
+  if (!isSqlConfigured) {
+    await ensureRestored();
+    const user = memoryStore.users.get(uid);
+    return user ? { ...user } : null;
+  }
+  try {
+    const rows = await db.select().from(users).where(eq(users.uid, uid));
+    if (rows.length === 0) return null;
+    const row = rows[0];
+    const profileRows = await db
+      .select()
+      .from(healthWorkerProfiles)
+      .where(eq(healthWorkerProfiles.userUid, row.uid));
+    const wp = profileRows[0];
+    return {
+      uid: row.uid,
+      email: row.email,
+      fullName: row.fullName,
+      role: row.role as UserRole,
+      facilityName: row.facilityName,
+      preferredLanguage: (row.preferredLanguage as 'en' | 'hi') || 'en',
+      isActive: row.isActive,
+      assignedVillage: row.assignedVillage || wp?.assignedVillage || undefined,
+      workerProfile: wp
+        ? {
+            workerCode: wp.workerCode,
+            assignedVillage: wp.assignedVillage,
+            blockName: wp.blockName,
+            district: wp.district,
+            primaryPhc: wp.primaryPhc,
+            phoneLastFour: wp.phoneLastFour,
+          }
+        : undefined,
+    };
+  } catch (error) {
+    console.warn('Database unavailable in getUserByUid, using memory store:', error);
+    const user = memoryStore.users.get(uid);
+    return user ? { ...user } : null;
+  }
+}
+
+export interface ScopedWorkspaceResult extends WorkspaceData {
+  metrics: ReturnType<typeof calculateDashboardMetrics>;
+  pagination: {
+    limit: number;
+    totalPatients: number;
+    totalScreenings: number;
+    totalReferrals: number;
+    totalFollowUps: number;
+    truncated: boolean;
+  };
+}
+
+const MAX_WORKSPACE_LIMIT = 500;
+const DEFAULT_WORKSPACE_LIMIT = 200;
+
+/**
+ * Scoped + paginated workspace read. Scoping (repository-level, via
+ * scopeWorkspaceData) runs BEFORE pagination; metrics are computed on
+ * the full scoped set so dashboards stay truthful when lists truncate.
+ */
+export async function getScopedWorkspaceData(
+  actor: AppUser,
+  options?: { limit?: number; referenceDateIso?: string }
+): Promise<ScopedWorkspaceResult> {
+  const limit = Math.min(
+    Math.max(1, options?.limit ?? DEFAULT_WORKSPACE_LIMIT),
+    MAX_WORKSPACE_LIMIT
+  );
+  const all = await getAllWorkspaceData(options?.referenceDateIso);
+  const scoped = scopeWorkspaceData(actor, {
+    patients: all.patients,
+    screenings: all.screenings,
+    referrals: all.referrals,
+    followUps: all.followUps,
+    auditLogs: all.auditLogs,
+    profiles: all.profiles,
+  });
+  const metrics = calculateDashboardMetrics(
+    scoped.patients,
+    scoped.screenings,
+    scoped.referrals,
+    scoped.followUps,
+    options?.referenceDateIso
+  );
+  const truncated =
+    scoped.patients.length > limit ||
+    scoped.screenings.length > limit ||
+    scoped.referrals.length > limit ||
+    scoped.followUps.length > limit;
+  return {
+    patients: scoped.patients.slice(0, limit),
+    screenings: scoped.screenings.slice(0, limit),
+    referrals: scoped.referrals.slice(0, limit),
+    followUps: scoped.followUps.slice(0, limit),
+    auditLogs: scoped.auditLogs.slice(0, limit),
+    profiles: scoped.profiles,
+    metrics,
+    pagination: {
+      limit,
+      totalPatients: scoped.patients.length,
+      totalScreenings: scoped.screenings.length,
+      totalReferrals: scoped.referrals.length,
+      totalFollowUps: scoped.followUps.length,
+      truncated,
+    },
+  };
+}
+
+function assertPhcAdmin(actor: { uid: string; role: UserRole }): void {
+  if (actor.role !== 'phc_admin') {
+    throw new Error(
+      `AuthorizationError: Role '${actor.role}' is not permitted to perform 'manage_users'.`
+    );
+  }
+}
+
+/** Admin: list all user accounts (phc_admin only). */
+export async function listUsersForAdmin(actor: AppUser): Promise<AppUser[]> {
+  assertPhcAdmin(actor);
+  if (!isSqlConfigured) {
+    await ensureRestored();
+    return [...memoryStore.users.values()].map((u) => ({ ...u }));
+  }
+  try {
+    const rows = await db.select().from(users).orderBy(desc(users.createdAt));
+    return rows.map((row) => ({
+      uid: row.uid,
+      email: row.email,
+      fullName: row.fullName,
+      role: row.role as UserRole,
+      facilityName: row.facilityName,
+      preferredLanguage: (row.preferredLanguage as 'en' | 'hi') || 'en',
+      isActive: row.isActive,
+      assignedVillage: row.assignedVillage || undefined,
+    }));
+  } catch (error) {
+    console.warn('Database unavailable in listUsersForAdmin, using memory store:', error);
+    return [...memoryStore.users.values()].map((u) => ({ ...u }));
+  }
+}
+
+/** Admin: activate/deactivate a user account (phc_admin only, audited). */
+export async function setUserActive(
+  actor: AppUser,
+  targetUid: string,
+  isActive: boolean
+): Promise<AppUser> {
+  assertPhcAdmin(actor);
+  if (targetUid === actor.uid && !isActive) {
+    throw new Error('AuthorizationError: You cannot deactivate your own account.');
+  }
+  let updated: AppUser | null = null;
+  if (!isSqlConfigured) {
+    await ensureRestored();
+    const existing = memoryStore.users.get(targetUid);
+    if (!existing) throw new Error(`User not found: ${targetUid}`);
+    updated = { ...existing, isActive };
+    memoryStore.users.set(targetUid, updated);
+    schedulePersist();
+  } else {
+    const rows = await db
+      .update(users)
+      .set({ isActive, updatedAt: new Date() })
+      .where(eq(users.uid, targetUid))
+      .returning();
+    if (rows.length === 0) throw new Error(`User not found: ${targetUid}`);
+    updated = await getUserByUid(targetUid);
+  }
+  await recordAuditLog({
+    actorUid: actor.uid,
+    actorRole: actor.role,
+    action: isActive ? 'USER_ACTIVATED' : 'USER_DEACTIVATED',
+    targetType: 'user',
+    targetId: targetUid,
+    summary: `${isActive ? 'Activated' : 'Deactivated'} user account ${targetUid}.`,
+  });
+  return updated!;
+}
+
+/** Admin: assign role / village / facility to a user (phc_admin only, audited). */
+export async function updateUserAssignment(
+  actor: AppUser,
+  targetUid: string,
+  assignment: { role?: UserRole; assignedVillage?: string; facilityName?: string }
+): Promise<AppUser> {
+  assertPhcAdmin(actor);
+  if (
+    assignment.role &&
+    !['health_worker', 'doctor', 'phc_admin'].includes(assignment.role)
+  ) {
+    throw new Error(`Invalid role: ${assignment.role}`);
+  }
+  let updated: AppUser | null = null;
+  if (!isSqlConfigured) {
+    await ensureRestored();
+    const existing = memoryStore.users.get(targetUid);
+    if (!existing) throw new Error(`User not found: ${targetUid}`);
+    updated = {
+      ...existing,
+      role: assignment.role ?? existing.role,
+      assignedVillage:
+        assignment.assignedVillage !== undefined
+          ? assignment.assignedVillage || undefined
+          : existing.assignedVillage,
+      facilityName: assignment.facilityName ?? existing.facilityName,
+    };
+    memoryStore.users.set(targetUid, updated);
+    schedulePersist();
+  } else {
+    const set: Record<string, unknown> = { updatedAt: new Date() };
+    if (assignment.role) set.role = assignment.role;
+    if (assignment.assignedVillage !== undefined)
+      set.assignedVillage = assignment.assignedVillage || null;
+    if (assignment.facilityName) set.facilityName = assignment.facilityName;
+    const rows = await db
+      .update(users)
+      .set(set)
+      .where(eq(users.uid, targetUid))
+      .returning();
+    if (rows.length === 0) throw new Error(`User not found: ${targetUid}`);
+    updated = await getUserByUid(targetUid);
+  }
+  await recordAuditLog({
+    actorUid: actor.uid,
+    actorRole: actor.role,
+    action: 'USER_ASSIGNMENT_UPDATED',
+    targetType: 'user',
+    targetId: targetUid,
+    summary: `Updated assignment for ${targetUid}: role=${assignment.role ?? '(unchanged)'}, village=${assignment.assignedVillage ?? '(unchanged)'}, facility=${assignment.facilityName ?? '(unchanged)'}.`,
+  });
+  return updated!;
+}
+
+/** Find one patient by ID across both persistence modes (mutation guards). */
+export async function findPatientById(patientId: string): Promise<PatientRecord | null> {
+  if (!isSqlConfigured) {
+    await ensureRestored();
+    return memoryStore.patients.find((p) => p.patientId === patientId) ?? null;
+  }
+  try {
+    const rows = await db.select().from(patients).where(eq(patients.patientId, patientId));
+    if (rows.length === 0) return null;
+    const p = rows[0];
+    return {
+      patientId: p.patientId,
+      fullName: p.fullName,
+      ageYears: p.ageYears,
+      sex: p.sex as 'female' | 'male' | 'other',
+      village: p.village,
+      blockName: p.blockName,
+      phoneLastFour: p.phoneLastFour,
+      consentObtained: p.consentObtained,
+      consentTimestamp: p.consentTimestamp,
+      knownConditions: safeParseJson<string[]>(p.knownConditions, []),
+      registeredByUid: p.registeredByUid,
+      isSynthetic: p.isSynthetic,
+      version: p.version,
+      createdAt: p.createdAt.toISOString(),
+      updatedAt: p.updatedAt.toISOString(),
+      syncStatus: 'synced',
+    };
+  } catch {
+    return memoryStore.patients.find((p) => p.patientId === patientId) ?? null;
   }
 }

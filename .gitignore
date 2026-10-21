@@ -6,3 +6,6 @@ coverage/
 *.tsbuildinfo
 .env*
 !.env.example
+
+# Local in-memory store snapshots (dev only — contains workspace data)
+.data/

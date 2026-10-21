@@ -31,8 +31,6 @@ interface PhcDoctorDashboardProps {
   metrics: DashboardMetrics;
   referrals: ReferralRecord[];
   screenings: ScreeningRecord[];
-  onSwitchToDoctorRole: () => void;
-  onTestUnauthorizedDoctorAction: () => Promise<string>;
   onOpenReferralSummary: (referral: ReferralRecord) => void;
   onQuickUpdateReferralStatus: (referral: ReferralRecord, status: ReferralStatus) => Promise<void>;
 }
@@ -50,15 +48,12 @@ export const PhcDoctorDashboard: React.FC<PhcDoctorDashboardProps> = ({
   metrics,
   referrals,
   screenings,
-  onSwitchToDoctorRole,
-  onTestUnauthorizedDoctorAction,
   onOpenReferralSummary,
   onQuickUpdateReferralStatus,
 }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | ReferralStatus>('all');
   const [priorityFilter, setPriorityFilter] = useState<'all' | ScreeningCategory>('all');
-  const [rbacTestMessage, setRbacTestMessage] = useState<string | null>(null);
 
   const labels = UI_LABELS[language];
 
@@ -109,31 +104,11 @@ export const PhcDoctorDashboard: React.FC<PhcDoctorDashboardProps> = ({
           </p>
         </div>
 
-        <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-          <button
-            type="button"
-            onClick={onSwitchToDoctorRole}
-            className="min-h-[44px] px-5 py-2.5 rounded-lg bg-teal-700 text-white text-xs font-semibold hover:bg-teal-800 transition-colors"
-          >
-            Switch Role to PHC Doctor (Demo)
-          </button>
-          <button
-            type="button"
-            onClick={async () => {
-              const msg = await onTestUnauthorizedDoctorAction();
-              setRbacTestMessage(msg);
-            }}
-            className="min-h-[44px] px-4 py-2.5 rounded-lg border border-slate-300 bg-white text-slate-800 text-xs font-semibold hover:bg-slate-50 transition-colors"
-          >
-            Test Server-Side RBAC (HTTP 403)
-          </button>
-        </div>
-
-        {rbacTestMessage && (
-          <div className="p-3.5 rounded-lg bg-amber-50 border border-amber-300 text-xs font-mono text-amber-950 text-left">
-            {rbacTestMessage}
-          </div>
-        )}
+        <p className="text-xs text-slate-500 pt-2">
+          Roles are assigned by a PHC administrator on your account. If you
+          need doctor access, ask your PHC admin to update your account role
+          — roles cannot be switched in the app.
+        </p>
       </div>
     );
   }

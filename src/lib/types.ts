@@ -27,6 +27,10 @@ export interface AppUser {
   facilityName: string;
   preferredLanguage: LanguageCode;
   isDemo?: boolean;
+  /** Set from users.is_active (migration 0002). Inactive users are rejected at auth. */
+  isActive?: boolean;
+  /** Set from users.assigned_village (migration 0002); health-worker scoping key. */
+  assignedVillage?: string;
   workerProfile?: {
     workerCode: string;
     assignedVillage: string;

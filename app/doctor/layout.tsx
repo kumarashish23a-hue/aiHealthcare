@@ -8,7 +8,6 @@ import { calculateDashboardMetrics } from '@/src/lib/workflow-logic';
 import type { AuditLogEntry, LanguageCode } from '@/src/lib/types';
 import {
   DOCTOR_AUTH_HEADERS,
-  DOCTOR_NAME,
   DoctorProvider,
   type DoctorWorkspace,
 } from './doctor-context';
@@ -27,6 +26,7 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
   const [referrals, setReferrals] = useState<DoctorWorkspace['referrals']>([]);
   const [followUps, setFollowUps] = useState<DoctorWorkspace['followUps']>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [actor, setActor] = useState<{ fullName: string; role: string } | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -40,6 +40,7 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
       setReferrals(data.referrals || []);
       setFollowUps(data.followUps || []);
       setAuditLogs(data.auditLogs || []);
+      if (data.actor) setActor({ fullName: data.actor.fullName, role: data.actor.role });
       setLoadError(null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'Failed to load PHC data');
@@ -58,6 +59,7 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
         setReferrals(data.referrals || []);
         setFollowUps(data.followUps || []);
         setAuditLogs(data.auditLogs || []);
+        if (data.actor) setActor({ fullName: data.actor.fullName, role: data.actor.role });
         setLoadError(null);
         setIsLoading(false);
       })
@@ -94,11 +96,11 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
       metrics,
       language,
       setLanguage,
-      doctorName: DOCTOR_NAME,
+      doctorName: actor?.fullName || 'PHC Medical Officer',
       refresh,
       updateReferral,
     }),
-    [patients, screenings, referrals, followUps, metrics, language, refresh, updateReferral]
+    [patients, screenings, referrals, followUps, metrics, language, refresh, updateReferral, actor]
   );
 
   return (
@@ -180,6 +182,20 @@ export default function DoctorLayout({ children }: { children: React.ReactNode }
           {isLoading ? (
             <div className="p-10 text-center text-sm text-slate-500">
               {language === 'hi' ? 'पीएचसी डेटा लोड हो रहा है...' : 'Loading PHC workspace data...'}
+            </div>
+          ) : actor && actor.role === 'health_worker' ? (
+            <div className="p-8 rounded-xl bg-white border border-red-200 text-center space-y-3">
+              <p className="text-sm font-bold text-red-700">
+                {language === 'hi' ? 'पहुंच प्रतिबंधित' : 'Access Restricted'}
+              </p>
+              <p className="text-xs text-slate-600">
+                {language === 'hi'
+                  ? 'डॉक्टर पोर्टल केवल डॉक्टर और PHC व्यवस्थापक खातों के लिए है। भूमिकाएं व्यवस्थापक द्वारा दी जाती हैं — ऐप में भूमिका नहीं बदली जा सकती।'
+                  : 'The doctor portal is for doctor and PHC admin accounts only. Roles are assigned by an administrator on your account — they cannot be switched in the app.'}
+              </p>
+              <Link href="/" className="inline-block min-h-[40px] px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold hover:bg-teal-800">
+                {language === 'hi' ? 'मुख्य ऐप पर वापस' : 'Return to Main App'}
+              </Link>
             </div>
           ) : (
             children

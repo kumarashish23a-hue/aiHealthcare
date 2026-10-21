@@ -8,11 +8,13 @@
     "start": "next start -p 3000 -H 0.0.0.0",
     "lint": "eslint .",
     "test": "vitest run",
-    "clean": "next clean"
+    "clean": "next clean",
+    "seed:demo": "node scripts/seed-demo.mjs"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
     "@hookform/resolvers": "^5.2.1",
+    "@supabase/supabase-js": "^2.118.0",
     "autoprefixer": "^10.4.21",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -20,7 +22,7 @@
     "dexie-react-hooks": "^4.4.0",
     "dotenv": "^18.0.8",
     "drizzle-orm": "^0.45.4",
-    "firebase": "^13.0.0",
+    "jose": "^6.2.13",
     "lucide-react": "^0.553.0",
     "motion": "^12.23.24",
     "next": "^15.4.9",

@@ -13,6 +13,7 @@ import {
   Users,
 } from 'lucide-react';
 import {
+  AppUser,
   AuditLogEntry,
   FollowUpRecord,
   PatientRecord,
@@ -23,7 +24,7 @@ import {
 } from '@/src/lib/types';
 import { formatAbhaId } from '@/src/lib/screening-engine';
 import { formatCategoryLabel, formatReferralStatus } from '@/src/lib/i18n';
-import { DEMO_USERS } from '@/src/lib/synthetic-fixtures';
+import { buildAuthHeaders } from '@/src/lib/auth-token';
 import type { LocalProfile } from '@/components/LoginPanel';
 
 const PROFILES_STORAGE_KEY = 'swasthya-profiles-v1';
@@ -212,6 +213,12 @@ export default function AdminPage() {
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [profiles, setProfiles] = useState<LocalProfile[]>([]);
   const [serverProfiles, setServerProfiles] = useState<StoredProfile[]>([]);
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [actorRole, setActorRole] = useState<UserRole | null>(null);
+  const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<
+    Record<string, { role: UserRole; assignedVillage: string; facilityName: string }>
+  >({});
   const [followUps, setFollowUps] = useState<FollowUpRecord[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -223,11 +230,7 @@ export default function AdminPage() {
   const loadWorkspace = () => {
     fetch('/api/workspace', {
       method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: 'Bearer demo-session-doctor',
-        'X-Active-Role': 'doctor',
-      },
+      headers: buildAuthHeaders(),
     })
       .then((res) => res.json().then((data) => ({ ok: res.ok, data })))
       .then(({ ok, data }) => {
@@ -238,6 +241,8 @@ export default function AdminPage() {
           setFollowUps(data.followUps || []);
           setAuditLogs(data.auditLogs || []);
           setServerProfiles(data.profiles || []);
+          setUsers(data.users || []);
+          setActorRole(data.actor?.role ?? null);
           setLoadError(null);
         } else {
           throw new Error(data.error);
@@ -265,6 +270,65 @@ export default function AdminPage() {
     loadProfiles();
   };
 
+  const postAction = async (action: string, payload: Record<string, unknown>) => {
+    const res = await fetch('/api/workspace', {
+      method: 'POST',
+      headers: buildAuthHeaders(),
+      body: JSON.stringify({ action, payload }),
+    });
+    const data = await res.json();
+    if (!res.ok || !data.ok) throw new Error(data.error || `Action failed (${res.status})`);
+    return data;
+  };
+
+  const toggleUserActive = async (user: AppUser) => {
+    try {
+      await postAction('set_user_active', { uid: user.uid, isActive: !(user.isActive !== false) });
+      setActionMessage(
+        `${user.fullName} ${user.isActive !== false ? 'deactivated' : 'activated'}.`
+      );
+      loadWorkspace();
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Failed to update user.');
+    }
+  };
+
+  const saveUserAssignment = async (user: AppUser) => {
+    const draft = drafts[user.uid];
+    if (!draft) return;
+    try {
+      await postAction('update_user_assignment', {
+        uid: user.uid,
+        role: draft.role,
+        assignedVillage: draft.assignedVillage,
+        facilityName: draft.facilityName,
+      });
+      setActionMessage(`Assignment saved for ${user.fullName}.`);
+      loadWorkspace();
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Failed to save assignment.');
+    }
+  };
+
+  const downloadReport = async (report: 'screenings' | 'referrals' | 'overdue') => {
+    try {
+      const res = await fetch(`/api/workspace?report=${report}`, {
+        method: 'GET',
+        headers: buildAuthHeaders(),
+      });
+      if (!res.ok) throw new Error(`Export failed (${res.status})`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${report}-report.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setActionMessage(err instanceof Error ? err.message : 'Export failed.');
+    }
+  };
+
   useEffect(() => {
     loadAll();
     const handleFocus = () => loadProfiles();
@@ -287,15 +351,13 @@ export default function AdminPage() {
   }, [serverProfiles, profiles]);
 
   const workerNameByUid = useMemo(() => {
-    const base = new Map<string, string>([
-      [DEMO_USERS.health_worker.uid, DEMO_USERS.health_worker.fullName],
-      [DEMO_USERS.doctor.uid, DEMO_USERS.doctor.fullName],
-    ]);
+    const base = new Map<string, string>();
+    for (const u of users) base.set(u.uid, `${u.fullName} (${ROLE_BADGE[u.role]?.label ?? u.role})`);
     for (const p of allProfiles) {
       base.set(p.uid, `${p.fullName} (${ROLE_BADGE[p.role]?.label ?? p.role})`);
     }
     return base;
-  }, [allProfiles]);
+  }, [allProfiles, users]);
 
   const actorName = (uid: string): string => workerNameByUid.get(uid) || uid;
 
@@ -396,8 +458,145 @@ export default function AdminPage() {
         )}
         {isLoading ? (
           <div className="p-10 text-center text-sm text-slate-500">Loading admin data...</div>
+        ) : actorRole !== null && actorRole !== 'phc_admin' ? (
+          <div className="p-8 rounded-xl bg-white border border-red-200 text-center space-y-3">
+            <p className="text-sm font-bold text-red-700">Access Restricted — PHC Admin only</p>
+            <p className="text-xs text-slate-600">
+              The admin panel requires a <strong>phc_admin</strong> account. Your account role is{' '}
+              <strong>{actorRole}</strong>. Roles are assigned by an existing PHC admin — they
+              cannot be switched in the app.
+            </p>
+            <Link href="/" className="inline-block min-h-[40px] px-4 py-2 rounded-lg bg-teal-700 text-white text-xs font-semibold hover:bg-teal-800">
+              Return to Main App
+            </Link>
+          </div>
         ) : (
           <>
+            {actionMessage && (
+              <div className="p-3.5 rounded-lg bg-teal-50 border border-teal-200 text-xs text-teal-900">
+                {actionMessage}
+              </div>
+            )}
+
+            {/* USER MANAGEMENT (phc_admin, server-enforced + audited) */}
+            <section className="p-5 rounded-xl bg-white border border-slate-200 space-y-3">
+              <h2 className="text-sm font-bold uppercase tracking-wide text-slate-900 flex items-center gap-2">
+                <Users className="w-4 h-4 text-slate-700" />
+                User Management ({users.length})
+              </h2>
+              <p className="text-[11px] text-slate-500">
+                Accounts are created when a user first signs in with Supabase Auth (default role:
+                health worker). Create a login for a new worker in the Supabase dashboard, then
+                assign their role, village and facility here. Every change is audit-logged.
+              </p>
+              {users.length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  No user accounts yet — they appear here after the first sign-in.
+                </p>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-left text-slate-500 border-b border-slate-200">
+                        <th className="py-2 pr-3">User</th>
+                        <th className="py-2 pr-3">Role</th>
+                        <th className="py-2 pr-3">Assigned Village</th>
+                        <th className="py-2 pr-3">Facility</th>
+                        <th className="py-2 pr-3">Status</th>
+                        <th className="py-2">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {users.map((u) => {
+                        const draft = drafts[u.uid] ?? {
+                          role: u.role,
+                          assignedVillage: u.assignedVillage ?? '',
+                          facilityName: u.facilityName,
+                        };
+                        const setDraft = (patch: Partial<typeof draft>) =>
+                          setDrafts((prev) => ({
+                            ...prev,
+                            [u.uid]: { ...draft, ...patch },
+                          }));
+                        return (
+                          <tr key={u.uid} className="border-b border-slate-100 align-top">
+                            <td className="py-2 pr-3">
+                              <p className="font-semibold text-slate-900">{u.fullName}</p>
+                              <p className="text-[10px] text-slate-500">{u.email}</p>
+                              <p className="text-[10px] font-mono text-slate-400">{u.uid}</p>
+                            </td>
+                            <td className="py-2 pr-3">
+                              <select
+                                value={draft.role}
+                                onChange={(e) => setDraft({ role: e.target.value as UserRole })}
+                                className="min-h-[32px] px-2 rounded-md border border-slate-300 bg-white text-xs"
+                              >
+                                <option value="health_worker">ASHA / Health Worker</option>
+                                <option value="doctor">PHC Doctor</option>
+                                <option value="phc_admin">PHC Admin</option>
+                              </select>
+                            </td>
+                            <td className="py-2 pr-3">
+                              <input
+                                type="text"
+                                value={draft.assignedVillage}
+                                onChange={(e) => setDraft({ assignedVillage: e.target.value })}
+                                placeholder="e.g., Rampur"
+                                className="min-h-[32px] px-2 rounded-md border border-slate-300 bg-white text-xs w-28"
+                              />
+                            </td>
+                            <td className="py-2 pr-3">
+                              <input
+                                type="text"
+                                value={draft.facilityName}
+                                onChange={(e) => setDraft({ facilityName: e.target.value })}
+                                className="min-h-[32px] px-2 rounded-md border border-slate-300 bg-white text-xs w-40"
+                              />
+                            </td>
+                            <td className="py-2 pr-3">
+                              {u.isActive === false ? (
+                                <span className="px-2 py-0.5 rounded-full bg-red-50 border border-red-200 text-red-700 font-semibold">Inactive</span>
+                              ) : (
+                                <span className="px-2 py-0.5 rounded-full bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">Active</span>
+                              )}
+                            </td>
+                            <td className="py-2 whitespace-nowrap">
+                              <button
+                                type="button"
+                                onClick={() => void saveUserAssignment(u)}
+                                className="min-h-[32px] px-2.5 py-1 rounded-md bg-slate-900 text-white text-[11px] font-semibold hover:bg-slate-700 mr-1.5"
+                              >
+                                Save
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void toggleUserActive(u)}
+                                className="min-h-[32px] px-2.5 py-1 rounded-md border border-slate-300 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50"
+                              >
+                                {u.isActive === false ? 'Activate' : 'Deactivate'}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2 pt-1">
+                <span className="text-[11px] font-semibold text-slate-600 self-center">Export CSV:</span>
+                <button type="button" onClick={() => void downloadReport('screenings')} className="min-h-[32px] px-3 py-1 rounded-md border border-slate-300 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
+                  Screenings by category & village
+                </button>
+                <button type="button" onClick={() => void downloadReport('referrals')} className="min-h-[32px] px-3 py-1 rounded-md border border-slate-300 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
+                  Referral completion
+                </button>
+                <button type="button" onClick={() => void downloadReport('overdue')} className="min-h-[32px] px-3 py-1 rounded-md border border-slate-300 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-50">
+                  Overdue follow-ups
+                </button>
+              </div>
+            </section>
+
             {/* Summary strip */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
               <div className="p-4 rounded-xl bg-white border border-slate-200">

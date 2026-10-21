@@ -44,6 +44,7 @@ import {
   VILLAGE_CATALOG,
 } from '@/src/lib/i18n';
 import { evaluateCbacScore, evaluateScreening, formatAbhaId } from '@/src/lib/screening-engine';
+import { PILOT_FACILITIES, formatFacilityLabel, getDefaultReferralFacility } from '@/src/lib/facilities';
 import { offlineDb } from '@/src/lib/offline-db';
 
 // Location policy: only villages/towns of Uttar Pradesh, India are accepted.
@@ -250,7 +251,7 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
     ].some((v) => v.trim() !== '');
   const [createReferralChecked, setCreateReferralChecked] = useState<boolean>(true);
   const [referralDestination, setReferralDestination] = useState<string>(
-    'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)'
+    formatFacilityLabel(getDefaultReferralFacility())
   );
   const [customFollowUpDate, setCustomFollowUpDate] = useState<string>('');
   const [customFollowUpNotes, setCustomFollowUpNotes] = useState<string>('');
@@ -3183,22 +3184,20 @@ export const HealthWorkerView: React.FC<HealthWorkerViewProps> = ({
                       {createReferralChecked && (
                         <div>
                           <label className="block text-xs text-slate-600 mb-1">
-                            Referral Destination (Simulated)
+                            Referral Destination
                           </label>
                           <select
                             value={referralDestination}
                             onChange={(e) => setReferralDestination(e.target.value)}
                             className="w-full min-h-[40px] px-3 py-1.5 rounded-lg border border-slate-300 text-xs text-slate-900 bg-white"
                           >
-                            <option value="Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)">
-                              Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)
-                            </option>
-                            <option value="Simulated PHC Rampur, Sitapur — Uttar Pradesh — Maternal High-Risk Clinic (Demo)">
-                              Simulated PHC Rampur, Sitapur — Uttar Pradesh — Maternal Clinic (Demo)
-                            </option>
-                            <option value="Simulated CHC Sitapur Block — Uttar Pradesh (Demo)">
-                              Simulated CHC Sitapur Block, Sitapur — Uttar Pradesh (Demo)
-                            </option>
+                            {PILOT_FACILITIES.filter((f) => f.type === 'PHC' || f.type === 'CHC').map(
+                              (f) => (
+                                <option key={f.id} value={formatFacilityLabel(f)}>
+                                  {formatFacilityLabel(f)}
+                                </option>
+                              )
+                            )}
                           </select>
                         </div>
                       )}

@@ -31,7 +31,6 @@ import {
   UserRole,
 } from '@/src/lib/types';
 import {
-  DEMO_USERS,
   INITIAL_AUDIT_LOGS,
   INITIAL_SYNTHETIC_FOLLOW_UPS,
   INITIAL_SYNTHETIC_PATIENTS,
@@ -57,6 +56,16 @@ import { PhcDoctorDashboard } from './PhcDoctorDashboard';
 import { OfflinePrivacyView } from './OfflinePrivacyView';
 import ThemeToggle from './ThemeToggle';
 import { LoginPanel, type LocalProfile } from './LoginPanel';
+import { buildAuthHeaders, setAccessToken } from '@/src/lib/auth-token';
+import { getSupabaseBrowserClient } from '@/src/lib/supabase-client';
+import {
+  createPinRecord,
+  isValidPinFormat,
+  loadPinRecord,
+  savePinRecord,
+  verifyPin,
+} from '@/src/lib/pin';
+import { formatFacilityLabel, getDefaultReferralFacility } from '@/src/lib/facilities';
 import { PatientScreeningModal } from './PatientScreeningModal';
 
 type MainSection = 'worker' | 'phc' | 'offline';
@@ -73,6 +82,12 @@ export const SwasthyaSetuApp: React.FC = () => {
   const [isSessionLocked, setIsSessionLocked] = useState<boolean>(false);
   const [unlockPin, setUnlockPin] = useState<string>('');
   const [unlockError, setUnlockError] = useState<string>('');
+  // User-set session PIN (Phase 3): first sign-in asks the user to set a
+  // PIN; only a salted hash is stored (src/lib/pin.ts). No default PIN.
+  const [pinSetupNeeded, setPinSetupNeeded] = useState<boolean>(false);
+  const [newPin, setNewPin] = useState<string>('');
+  const [confirmPin, setConfirmPin] = useState<string>('');
+  const [pinSetupError, setPinSetupError] = useState<string>('');
 
   // Login Panel State (gate before entering the workspace)
   const [sessionStarted, setSessionStarted] = useState<boolean>(false);
@@ -114,35 +129,40 @@ export const SwasthyaSetuApp: React.FC = () => {
         isDemo: false,
       };
     }
-    return activeRole === 'doctor' ? DEMO_USERS.doctor : DEMO_USERS.health_worker;
+    return {
+      uid: 'anonymous',
+      email: '',
+      fullName: 'Not signed in',
+      role: activeRole,
+      facilityName: '',
+      preferredLanguage: language,
+      isDemo: false,
+    };
   }, [sessionProfile, activeRole, language]);
 
-  const getAuthHeaders = useCallback(
-    (overrideRole?: UserRole): Record<string, string> => {
-      const targetRole = overrideRole || activeRole;
-      const bearer =
-        targetRole === 'doctor' ? 'Bearer demo-session-doctor' : 'Bearer demo-session-asha';
-      return {
-        'Content-Type': 'application/json',
-        Authorization: bearer,
-        'X-Active-Role': targetRole,
-      };
-    },
-    [activeRole]
-  );
+  // Auth headers carry the Supabase access token only. The server
+  // derives role/scope from the account record — no role header exists.
+  const getAuthHeaders = useCallback((): Record<string, string> => buildAuthHeaders(), []);
 
-  // Enter workspace with a profile saved from the Login Panel (no auth required)
+  // Enter workspace after a verified Supabase sign-in (Login Panel).
   const handleEnterWorkspace = (profile: LocalProfile): void => {
     setActiveRole(profile.role);
     setSessionProfile(profile);
     setSessionStarted(true);
-    if (mainSection === 'phc' && profile.role !== 'doctor') {
+    if (profile.role === 'doctor' || profile.role === 'phc_admin') {
+      setMainSection('phc');
+    } else if (mainSection === 'phc') {
       setMainSection('worker');
     }
+    // First time on this device: ask the user to set a session PIN.
+    setPinSetupNeeded(loadPinRecord() === null);
   };
 
-  // Exit back to the login panel (clears only the session, saved profiles remain)
+  // Exit back to the login panel: sign out of Supabase and clear the
+  // token mirror (saved local profiles remain for the next sign-in).
   const handleExitToLogin = (): void => {
+    void getSupabaseBrowserClient()?.auth.signOut();
+    setAccessToken(null);
     setSessionStarted(false);
     setSessionProfile(null);
   };
@@ -163,7 +183,17 @@ export const SwasthyaSetuApp: React.FC = () => {
     };
   }, []);
 
-  // Strict Role Guard is handled in role-switch handlers and view render guard
+  // Keep the sessionStorage token mirror in sync with Supabase Auth
+  // (sign-in, token refresh, sign-out in another tab).
+  useEffect(() => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+      setAccessToken(session?.access_token ?? null);
+    });
+    return () => data.subscription.unsubscribe();
+  }, []);
+
 
   // Load workspace data from Cloud SQL API or IndexedDB
   const fetchWorkspaceFromServer = useCallback(async () => {
@@ -728,7 +758,7 @@ export const SwasthyaSetuApp: React.FC = () => {
         screeningId: screening.screeningId,
         priority: screening.resultCategory,
         reasonForReferral: reasonSummary,
-        destinationFacility: 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)',
+        destinationFacility: formatFacilityLabel(getDefaultReferralFacility()),
         status: 'pending',
         assignedProfessional: 'Dr. Rajesh Verma (MO-PHC)',
         doctorNotes: '',
@@ -754,7 +784,7 @@ export const SwasthyaSetuApp: React.FC = () => {
             screeningId: screening.screeningId,
             priority: screening.resultCategory,
             reasonForReferral: reasonSummary,
-            destinationFacility: 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)',
+            destinationFacility: formatFacilityLabel(getDefaultReferralFacility()),
             createdDate: offlineRef.createdDate,
           },
         },
@@ -779,7 +809,7 @@ export const SwasthyaSetuApp: React.FC = () => {
           screeningId: screening.screeningId,
           priority: screening.resultCategory,
           reasonForReferral: reasonSummary,
-          destinationFacility: 'Simulated PHC Rampur, Sitapur — Uttar Pradesh (Demo)',
+          destinationFacility: formatFacilityLabel(getDefaultReferralFacility()),
           createdDate: new Date().toISOString().slice(0, 10),
         },
       }),
@@ -921,23 +951,6 @@ export const SwasthyaSetuApp: React.FC = () => {
     };
   };
 
-  const handleTestUnauthorizedDoctorAction = async (): Promise<string> => {
-    const res = await fetch('/api/workspace', {
-      method: 'POST',
-      headers: getAuthHeaders('health_worker'),
-      body: JSON.stringify({
-        action: 'update_referral',
-        payload: {
-          referralId: 'REF-PHC-5001',
-          status: 'completed',
-          expectedVersion: 1,
-        },
-      }),
-    });
-    const data = await res.json();
-    return `Server Response HTTP ${res.status}: ${data.error}`;
-  };
-
   // Inspected screening/referral objects for the modal
   const inspectedScreening = useMemo(
     () => screenings.find((s) => s.screeningId === inspectedScreeningId),
@@ -972,6 +985,90 @@ export const SwasthyaSetuApp: React.FC = () => {
     [followUps, inspectedScreening]
   );
 
+  // PIN Setup Overlay (first sign-in on this device: user sets a PIN)
+  if (sessionStarted && pinSetupNeeded && !isSessionLocked) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="w-full max-w-md rounded-xl bg-white p-6 border border-slate-200 space-y-5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-lg bg-teal-50 border border-teal-200 flex items-center justify-center text-teal-800">
+              <Lock className="w-5 h-5" />
+            </div>
+            <div>
+              <h1 className="text-lg font-bold text-slate-900">
+                {language === 'hi' ? 'सत्र PIN सेट करें' : 'Set a Session PIN'}
+              </h1>
+              <p className="text-xs text-slate-500">
+                {language === 'hi'
+                  ? 'इस डिवाइस पर स्क्रीन लॉक के लिए 4–6 अंकों का PIN चुनें। केवल इसका हैश सेव होता है।'
+                  : 'Choose a 4–6 digit PIN to lock the screen on this device. Only a hash of it is stored.'}
+              </p>
+            </div>
+          </div>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              void (async () => {
+                if (!isValidPinFormat(newPin)) {
+                  setPinSetupError(
+                    language === 'hi' ? 'PIN 4–6 अंकों का होना चाहिए।' : 'PIN must be 4–6 digits.'
+                  );
+                  return;
+                }
+                if (newPin !== confirmPin) {
+                  setPinSetupError(
+                    language === 'hi' ? 'दोनों PIN मेल नहीं खाते।' : 'The two PINs do not match.'
+                  );
+                  return;
+                }
+                savePinRecord(await createPinRecord(newPin));
+                setNewPin('');
+                setConfirmPin('');
+                setPinSetupError('');
+                setPinSetupNeeded(false);
+              })();
+            }}
+            className="space-y-4"
+          >
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                {language === 'hi' ? 'नया PIN' : 'New PIN'}
+              </label>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={newPin}
+                onChange={(e) => setNewPin(e.target.value.replace(/\D/g, ''))}
+                className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-base font-mono text-slate-900"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                {language === 'hi' ? 'PIN फिर से दर्ज करें' : 'Confirm PIN'}
+              </label>
+              <input
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                value={confirmPin}
+                onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ''))}
+                className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-base font-mono text-slate-900"
+              />
+              {pinSetupError && <p className="text-xs text-red-600 mt-1">{pinSetupError}</p>}
+            </div>
+            <button
+              type="submit"
+              className="w-full min-h-[44px] rounded-lg bg-teal-700 text-white text-sm font-semibold hover:bg-teal-800"
+            >
+              {language === 'hi' ? 'PIN सेट करें' : 'Set PIN'}
+            </button>
+          </form>
+        </div>
+      </div>
+    );
+  }
+
   // Session Lock Overlay
   if (isSessionLocked) {
     return (
@@ -992,26 +1089,38 @@ export const SwasthyaSetuApp: React.FC = () => {
           <form
             onSubmit={(e) => {
               e.preventDefault();
-              if (unlockPin === '1234' || unlockPin.trim().length >= 4) {
-                setIsSessionLocked(false);
-                setUnlockPin('');
-                setUnlockError('');
-              } else {
-                setUnlockError('Enter a 4-digit PIN (Demo PIN: 1234)');
-              }
+              void (async () => {
+                const record = loadPinRecord();
+                if (!record) {
+                  // No PIN set on this device yet: go to PIN setup.
+                  setIsSessionLocked(false);
+                  setPinSetupNeeded(true);
+                  return;
+                }
+                if (await verifyPin(unlockPin, record)) {
+                  setIsSessionLocked(false);
+                  setUnlockPin('');
+                  setUnlockError('');
+                } else {
+                  setUnlockError(
+                    language === 'hi' ? 'गलत PIN। फिर से प्रयास करें।' : 'Incorrect PIN. Please try again.'
+                  );
+                }
+              })();
             }}
             className="space-y-4"
           >
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">
-                Enter PIN (Demo PIN: 1234)
+                {language === 'hi' ? 'अपना PIN दर्ज करें' : 'Enter your PIN'}
               </label>
               <input
                 type="password"
+                inputMode="numeric"
                 maxLength={6}
                 value={unlockPin}
-                onChange={(e) => setUnlockPin(e.target.value)}
-                placeholder="1234"
+                onChange={(e) => setUnlockPin(e.target.value.replace(/\D/g, ''))}
+                placeholder="••••"
                 className="w-full min-h-[44px] px-3 py-2 rounded-lg border border-slate-300 text-base font-mono text-slate-900"
               />
               {unlockError && <p className="text-xs text-red-600 mt-1">{unlockError}</p>}
@@ -1241,26 +1350,14 @@ export const SwasthyaSetuApp: React.FC = () => {
           <div className="pt-2 border-t border-slate-200/80 flex items-center justify-between gap-2">
             <div className="truncate">
               <p className="font-semibold text-slate-900 truncate">
-                {activeRole === 'doctor' ? labels.roleDoctor : labels.roleHealthWorker}
+                {activeRole === 'doctor'
+                  ? labels.roleDoctor
+                  : activeRole === 'phc_admin'
+                    ? 'PHC Admin'
+                    : labels.roleHealthWorker}
               </p>
               <p className="text-slate-500 truncate">{currentUser.fullName}</p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                if (activeRole === 'health_worker') {
-                  setActiveRole('doctor');
-                  setMainSection('phc');
-                } else {
-                  setActiveRole('health_worker');
-                  setMainSection('worker');
-                }
-              }}
-              className="px-2 py-1 rounded border border-slate-300 bg-white text-[11px] font-semibold text-slate-700 hover:bg-slate-100 shrink-0"
-              title="Switch Role for Demo"
-            >
-              Switch
-            </button>
           </div>
 
           <div className="flex items-center justify-between gap-2 pt-1">
@@ -1412,15 +1509,13 @@ export const SwasthyaSetuApp: React.FC = () => {
               )}
 
               {mainSection === 'phc' && (
-                activeRole === 'doctor' ? (
+                activeRole === 'doctor' || activeRole === 'phc_admin' ? (
                   <PhcDoctorDashboard
                     currentUserRole={currentUser.role}
                     language={language}
                     metrics={liveMetrics}
                     referrals={referrals}
                     screenings={screenings}
-                    onSwitchToDoctorRole={() => setActiveRole('doctor')}
-                    onTestUnauthorizedDoctorAction={handleTestUnauthorizedDoctorAction}
                     onOpenReferralSummary={(ref) => setInspectedScreeningId(ref.screeningId)}
                     onQuickUpdateReferralStatus={async (ref, nextStatus) => {
                       await handleUpdateReferral({
@@ -1456,15 +1551,6 @@ export const SwasthyaSetuApp: React.FC = () => {
                   isOffline={effectiveOffline}
                   simulatedOffline={simulatedOffline}
                   onToggleSimulatedOffline={() => setSimulatedOffline((prev) => !prev)}
-                  activeRole={activeRole}
-                  onChangeRole={(r) => {
-                    setActiveRole(r);
-                    if (r === 'doctor') {
-                      setMainSection('phc');
-                    } else {
-                      setMainSection('worker');
-                    }
-                  }}
                   onChangeLanguage={setLanguage}
                   isSyncing={isSyncing}
                   storageSafety={storageSafety}
@@ -1489,7 +1575,7 @@ export const SwasthyaSetuApp: React.FC = () => {
                       };
                       await fetch('/api/workspace', {
                         method: 'POST',
-                        headers: getAuthHeaders('doctor'),
+                        headers: getAuthHeaders(),
                         body: JSON.stringify({
                           action: item.action,
                           payload: forcedPayload,

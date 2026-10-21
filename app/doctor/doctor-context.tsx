@@ -1,7 +1,7 @@
 'use client';
 
 import React, { createContext, useContext } from 'react';
-import { DEMO_USERS } from '@/src/lib/synthetic-fixtures';
+import { buildAuthHeaders } from '@/src/lib/auth-token';
 import type {
   DashboardMetrics,
   FollowUpRecord,
@@ -11,13 +11,10 @@ import type {
   ScreeningRecord,
 } from '@/src/lib/types';
 
-export const DOCTOR_AUTH_HEADERS = (): Record<string, string> => ({
-  'Content-Type': 'application/json',
-  Authorization: 'Bearer demo-session-doctor',
-  'X-Active-Role': 'doctor',
-});
-
-export const DOCTOR_NAME = DEMO_USERS.doctor.fullName;
+// Headers carry the signed-in user's Supabase access token (mirrored in
+// sessionStorage at sign-in). The server derives the doctor's identity
+// and role from the account record — there is no doctor demo token.
+export const DOCTOR_AUTH_HEADERS = (): Record<string, string> => buildAuthHeaders();
 
 export interface DoctorWorkspace {
   patients: PatientRecord[];
